@@ -27,7 +27,6 @@
 #include "periph/uart.h"
 
 #include "board.h"
-#include "tm4c1294ncpdt.h"
 
 #include "driverlib/rom.h"
 #include "driverlib/sysctl.h"

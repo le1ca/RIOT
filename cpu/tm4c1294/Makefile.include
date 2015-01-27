@@ -18,7 +18,7 @@ export LINKERSCRIPT = $(RIOTCPU)/$(CPU)/linkerscript.ld
 
 #export the CPU model
 MODEL = $(shell echo $(CPU_MODEL)|tr 'a-z' 'A-Z')
-export CFLAGS += -DCPU_MODEL_$(MODEL) -DTARGET_IS_BLIZZARD_RB1
+export CFLAGS += -DCPU_MODEL_$(MODEL) -DTARGET_IS_SNOWFLAKE_RA1
 
 # include CPU specific includes
 export INCLUDES += -I$(RIOTCPU)/$(CPU)/include

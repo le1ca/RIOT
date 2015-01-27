@@ -137,6 +137,7 @@ void isr_tim4a(void)                 __attribute__ ((weak, alias("dummy_handler"
 void isr_tim4b(void)                 __attribute__ ((weak, alias("dummy_handler")));
 void isr_tim5a(void)                 __attribute__ ((weak, alias("dummy_handler")));
 void isr_tim5b(void)                 __attribute__ ((weak, alias("dummy_handler")));
+void isr_emac0(void)                 __attribute__ ((weak, alias("dummy_handler")));
 
 /* interrupt vector table */
 __attribute__ ((section(".vectors")))
@@ -200,7 +201,7 @@ const void *interrupt_vector[] = {
     dummy_handler,                      // I2C1 Master and Slave
     dummy_handler,                      // CAN0
     dummy_handler,                      // CAN1
-    0,                                  // Ethernet
+    isr_emac0,                          // Ethernet
     dummy_handler,                      // Hibernate
     dummy_handler,                      // USB0
     dummy_handler,                      // PWM Generator 3
