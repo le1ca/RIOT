@@ -53,6 +53,11 @@ struct rx_buffer_s _ti_emac_rx_buffer[RX_BUF_SIZE];
 #define NUM_TX_DESCRIPTORS 8
 #endif
 
+#define NUM_RX_BUFFERS 10
+#define NUM_TX_BUFFERS 10
+
+#define BUFFER_SIZE 512
+
 #define PHY_PHYS_ADDR 0
 
 typedef struct {
@@ -69,13 +74,17 @@ typedef struct {
 
 typedef struct tpbuffer {
 	uint16_t len;
-	uint8_t  p[512];
+	uint8_t  p[BUFFER_SIZE];
+	uint8_t  free;
+	struct tpbuffer *next;
+	uint16_t tot_len;
 } tpbuffer;
 
 tDescriptor g_pTxDescriptors[NUM_TX_DESCRIPTORS];
 tDescriptor g_pRxDescriptors[NUM_RX_DESCRIPTORS];
 
-tpbuffer rxbuffers[NUM_RX_DESCRIPTORS];
+tpbuffer rxbuffers[NUM_RX_BUFFERS];
+tpbuffer txbuffers[NUM_TX_BUFFERS];
 
 tDescriptorList g_TxDescList = {
     g_pTxDescriptors, NUM_TX_DESCRIPTORS, 0, 0
@@ -84,6 +93,41 @@ tDescriptorList g_RxDescList = {
     g_pRxDescriptors, NUM_RX_DESCRIPTORS, 0, 0
 };
 
+tpbuffer *alloc_buf(tpbuffer *pool);
+void free_buf(tpbuffer *buf);
+void ti_emac_buf_cat(tpbuffer *a, tpbuffer *b);
+
+tpbuffer *alloc_buf(tpbuffer pool[]){
+	tpbuffer *r = 0;
+	uint8_t i;
+	for(i = 0; i < NUM_RX_BUFFERS; i++){
+		if(pool[i].free){
+			r = &pool[i];
+			r->len = BUFFER_SIZE;
+			r->tot_len = BUFFER_SIZE;
+			r->next = 0;
+			r->free = 0;
+			break;
+		}
+	}
+	return r;
+}
+
+void free_buf(tpbuffer *buf){
+	buf->len = BUFFER_SIZE;
+	buf->tot_len = BUFFER_SIZE;
+	buf->next = 0;
+	buf->free = 0;
+}
+
+void ti_emac_buf_cat(tpbuffer *h, tpbuffer *t){
+	tpbuffer *p;
+	for (p = h; p->next != NULL; p = p->next) {
+		p->tot_len += t->tot_len;
+  	}
+	p->tot_len += t->tot_len;
+  	p->next = t;
+}
 
 /*---------------------------------------------------------------------------*
  *                           Radio Driver API                                *
@@ -124,8 +168,17 @@ inline void ti_emac_dma_init(void){
     */
   for(ui32Loop = 0; ui32Loop < NUM_RX_DESCRIPTORS; ui32Loop++)
   {
+      
+      g_pRxDescriptors[ui32Loop].pBuf = alloc_buf(rxbuffers);
+      /*
       g_pRxDescriptors[ui32Loop].pBuf = &rxbuffers[ui32Loop];
       g_pRxDescriptors[ui32Loop].pBuf->len = 512;
+      g_pRxDescriptors[ui32Loop].pBuf->tot_len = 512;
+      g_pRxDescriptors[ui32Loop].pBuf->next = 0;
+      g_pRxDescriptors[ui32Loop].pBuf->free = 1;
+      */
+      
+      
       g_pRxDescriptors[ui32Loop].Desc.ui32Count = DES1_RX_CTRL_CHAINED;
       if(g_pRxDescriptors[ui32Loop].pBuf)
       {
@@ -291,6 +344,8 @@ void ti_emac_switch_to_rx(void){
 }
 
 void process_phy_interrupt(void);
+void process_tx_interrupt(void);
+void process_rx_interrupt(void);
 
 void isr_emac0(void){
 
@@ -313,15 +368,14 @@ void isr_emac0(void){
       process_phy_interrupt();
 	}
 
-
 	if(status & EMAC_INT_TRANSMIT){
-		printf("emac0 tx int\n");
-      //tivaif_process_transmit(tivaif);
+		//printf("emac0 tx int\n");
+        process_tx_interrupt();
 	}
 
 	if(status & (EMAC_INT_RECEIVE | EMAC_INT_RX_NO_BUFFER | EMAC_INT_RX_STOPPED)){
-		printf("emac0 rx int\n");
-      //tivaif_receive(psNetif);
+		//printf("emac0 rx int\n");
+        process_rx_interrupt();
 	}
 }
 
@@ -383,6 +437,214 @@ inline void process_phy_interrupt(void){
         /* Reconfigure the MAC */
         ROM_EMACConfigSet(EMAC0_BASE, ui32Config, ui32Mode, ui32RxMaxFrameSize);
     }
+}
+
+inline void process_tx_interrupt(void){
+    tDescriptorList *pDescList;
+    uint32_t ui32NumDescs;
+
+    /* Get a pointer to the transmit descriptor list. */
+    pDescList = &g_TxDescList;
+
+    /* Walk the list until we have checked all descriptors or we reach the
+     * write pointer or find a descriptor that the hardware is still working
+     * on.
+     */
+    for(ui32NumDescs = 0; ui32NumDescs < pDescList->ui32NumDescs; ui32NumDescs++)
+    {
+        /* Has the buffer attached to this descriptor been transmitted? */
+        if(pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus &
+           DES0_TX_CTRL_OWN)
+        {
+            /* No - we're finished. */
+            break;
+        }
+
+        /* Does this descriptor have a buffer attached to it? */
+        if(pDescList->pDescriptors[pDescList->ui32Read].pBuf)
+        {
+            /* Yes - free it if it's not marked as an intermediate pbuf */
+            //if(!((uint32_t)(pDescList->pDescriptors[pDescList->ui32Read].pBuf) & 1))
+            //{
+                //pbuf_free(pDescList->pDescriptors[pDescList->ui32Read].pBuf);
+                //pDescList->pDescriptors[pDescList->ui32Read].pBuf->free = 1;
+                //DRIVER_STATS_INC(TXBufFreedCount);
+            //}
+            free_buf(pDescList->pDescriptors[pDescList->ui32Read].pBuf);
+            //pDescList->pDescriptors[pDescList->ui32Read].pBuf = NULL;
+        }
+        else
+        {
+            /* If the descriptor has no buffer, we are finished. */
+            break;
+        }
+
+        /* Move on to the next descriptor. */
+        pDescList->ui32Read++;
+        if(pDescList->ui32Read == pDescList->ui32NumDescs)
+        {
+            pDescList->ui32Read = 0;
+        }
+    }
+}
+
+inline void process_rx_interrupt(void){
+  tDescriptorList *pDescList;
+  struct tpbuffer *pBuf;
+  uint32_t ui32DescEnd;
+
+  /* Get a pointer to the receive descriptor list. */
+  pDescList = &g_RxDescList;
+
+  /* Start with a NULL pbuf so that we don't try to link chain the first
+   * time round.
+   */
+  pBuf = NULL;
+
+  /* Determine where we start and end our walk of the descriptor list */
+  ui32DescEnd = pDescList->ui32Read ? (pDescList->ui32Read - 1) : (pDescList->ui32NumDescs - 1);
+
+  /* Step through the descriptors that are marked for CPU attention. */
+  while(pDescList->ui32Read != ui32DescEnd)
+  {
+      /* Does the current descriptor have a buffer attached to it? */
+      if(pDescList->pDescriptors[pDescList->ui32Read].pBuf)
+      {
+          /* Yes - determine if the host has filled it yet. */
+          if(pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus &
+             DES0_RX_CTRL_OWN)
+          {
+              /* The DMA engine still owns the descriptor so we are finished */
+              break;
+          }
+
+          //DRIVER_STATS_INC(RXBufReadCount);
+
+          /* If this descriptor contains the end of the packet, fix up the
+           * buffer size accordingly.
+           */
+          if(pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus &
+             DES0_RX_STAT_LAST_DESC)
+          {
+              /* This is the last descriptor for the frame so fix up the
+               * length.  It is safe for us to modify the internal fields
+               * directly here (rather than calling pbuf_realloc) since we
+               * know each of these pbufs is never chained.
+               */
+              pDescList->pDescriptors[pDescList->ui32Read].pBuf->len =
+                       (pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus &
+                        DES0_RX_STAT_FRAME_LENGTH_M) >>
+                        DES0_RX_STAT_FRAME_LENGTH_S;
+              pDescList->pDescriptors[pDescList->ui32Read].pBuf->tot_len =
+                        pDescList->pDescriptors[pDescList->ui32Read].pBuf->len;
+          }
+
+          if(pBuf)
+          {
+              /* Link this pbuf to the last one we looked at since this buffer
+               * is a continuation of an existing frame (split across mui32tiple
+               * pbufs).  Note that we use pbuf_cat() here rather than
+               * pbuf_chain() since we don't want to increase the reference
+               * count of either pbuf - we only want to link them together.
+               */
+              ti_emac_buf_cat(pBuf, pDescList->pDescriptors[pDescList->ui32Read].pBuf);
+              pDescList->pDescriptors[pDescList->ui32Read].pBuf = pBuf;
+          }
+
+          /* Remember the buffer associated with this descriptor. */
+          pBuf = pDescList->pDescriptors[pDescList->ui32Read].pBuf;
+
+          /* Is this the last descriptor for the current frame? */
+          if(pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus &
+             DES0_RX_STAT_LAST_DESC)
+          {
+              /* Yes - does the frame contain errors? */
+              if(pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus &
+                 DES0_RX_STAT_ERR)
+              {
+                  /* This is a bad frame so discard it and update the relevant
+                   * statistics.
+                   */
+                  //LWIP_DEBUGF(NETIF_DEBUG, ("tivaif_receive: packet error\n"));
+                  free_buf(pBuf);
+                  //LINK_STATS_INC(link.drop);
+                  //DRIVER_STATS_INC(RXPacketErrCount);
+                  puts("[emac] rx bad frame");
+              }
+              else
+              {
+                  /* This is a good frame so pass it up the stack. */
+                  //LINK_STATS_INC(link.recv);
+                  //DRIVER_STATS_INC(RXPacketReadCount);
+                  puts("[emac] good frame");
+
+				/*
+                  / * Place the timestamp in the PBUF if PTPD is enabled * /
+                  pBuf->time_s =
+                       pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32IEEE1588TimeHi;
+                  pBuf->time_ns =
+                       pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32IEEE1588TimeLo;
+				*/
+
+                  //if(ethernet_input(pBuf, psNetif) != ERR_OK){
+
+                      /* drop the packet */
+                      //LWIP_DEBUGF(NETIF_DEBUG, ("tivaif_input: input error\n"));
+                      //pbuf_free(pBuf);
+
+                      /* Adjust the link statistics */
+                      //LINK_STATS_INC(link.memerr);
+                      //LINK_STATS_INC(link.drop);
+                      //DRIVER_STATS_INC(RXPacketCBErrCount);
+                  //}
+
+                  /* We're finished with this packet so make sure we don't try
+                   * to link the next buffer to it.
+                   */
+                  pBuf = NULL;
+              }
+          }
+      }
+
+      /* Allocate a new buffer for this descriptor */
+      pDescList->pDescriptors[pDescList->ui32Read].pBuf = alloc_buf(rxbuffers);
+      pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32Count = DES1_RX_CTRL_CHAINED;
+      if(pDescList->pDescriptors[pDescList->ui32Read].pBuf)
+      {
+          /* We got a buffer so fill in the payload pointer and size. */
+          pDescList->pDescriptors[pDescList->ui32Read].Desc.pvBuffer1 =
+                              pDescList->pDescriptors[pDescList->ui32Read].pBuf->p;
+          pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32Count |=
+                              (pDescList->pDescriptors[pDescList->ui32Read].pBuf->len <<
+                               DES1_RX_CTRL_BUFF1_SIZE_S);
+
+          /* Give this descriptor back to the hardware */
+          pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus =
+                              DES0_RX_CTRL_OWN;
+      }
+      else
+      {
+          //LWIP_DEBUGF(NETIF_DEBUG, ("tivaif_receive: pbuf_alloc error\n"));
+
+          pDescList->pDescriptors[pDescList->ui32Read].Desc.pvBuffer1 = 0;
+
+          /* Update the stats to show we coui32dn't allocate a pbuf. */
+          //DRIVER_STATS_INC(RXNoBufCount);
+          //LINK_STATS_INC(link.memerr);
+
+          /* Stop parsing here since we can't leave a broken descriptor in
+           * the chain.
+           */
+          break;
+      }
+
+      /* Move on to the next descriptor in the chain, taking care to wrap. */
+      pDescList->ui32Read++;
+      if(pDescList->ui32Read == pDescList->ui32NumDescs)
+      {
+          pDescList->ui32Read = 0;
+      }
+  }
 }
 
 /*
