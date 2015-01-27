@@ -4,6 +4,8 @@
 #include "cpu.h"
 #include "driverlib/gpio.h"
 
+typedef uint32_t radio_packet_length_t;
+
 /**
  * Define the nominal CPU core clock in this board
  */

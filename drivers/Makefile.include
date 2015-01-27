@@ -28,3 +28,6 @@ endif
 ifneq (,$(filter nrf24l01p,$(USEMODULE)))
     USEMODULE_INCLUDES += $(RIOTBASE)/drivers/nrf24l01p/include
 endif
+ifneq (,$(filter ti_emac,$(USEMODULE)))
+    USEMODULE_INCLUDES += $(RIOTBASE)/drivers/ti_emac/include
+endif

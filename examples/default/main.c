@@ -157,7 +157,10 @@ int main(void)
 #endif
 
 #ifdef MODULE_TRANSCEIVER
+	puts("init transceiver");
     init_transceiver();
+#else
+	puts("no transceiver");
 #endif
 
 #ifdef FEATURE_PERIPH_RTC

@@ -65,5 +65,7 @@ ifneq (,$(filter fox,$(BOARD)))
         USEMODULE += l3g4200d
 	USEMODULE += lsm303dlhc
 endif
-
+ifneq (,$(filter ek-tm4c1294xl,$(BOARD)))
+	USEMODULE += ti_emac
+endif
 include $(RIOTBASE)/Makefile.include

@@ -59,6 +59,11 @@
 #define TEXT_SIZE           NATIVE_MAX_DATA_LENGTH
 #define _TC_TYPE            TRANSCEIVER_NATIVE
 
+#elif defined( MODULE_TI_EMAC )
+#include "ti_emac.h"
+#define TEXT_SIZE TI_EMAC_MAX_DATA_LENGTH
+#define _TC_TYPE TRANSCEIVER_TI_EMAC
+
 #elif defined( MODULE_MC1322X )
 #include "mc1322x.h"
 #include "maca.h"

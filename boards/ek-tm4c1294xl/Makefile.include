@@ -2,6 +2,8 @@
 export CPU = tm4c1294
 export CPU_MODEL = tm4c1294ncpdt
 
+export FEATURES_PROVIDED += transceiver
+
 #define the default port depending on the host OS
 OS := $(shell uname)
 ifeq ($(OS),Linux)

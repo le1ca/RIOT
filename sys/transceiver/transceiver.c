@@ -30,6 +30,10 @@
 #include "transceiver.h"
 
 /* supported transceivers */
+#ifdef MODULE_TI_EMAC
+#include "ti_emac.h"
+#endif
+
 #ifdef MODULE_CC110X
 #include "cc110x.h"
 #endif
@@ -130,6 +134,9 @@ void receive_mc1322x_packet(ieee802154_packet_t *trans_p);
 #ifdef MODULE_AT86RF231
 void receive_at86rf231_packet(ieee802154_packet_t *trans_p);
 #endif
+#ifdef MODULE_TI_EMAC
+void receive_ti_emac_packet(radio_packet_t *trans_p);
+#endif
 static int8_t send_packet(transceiver_type_t t, void *pkt);
 static int32_t get_channel(transceiver_type_t t);
 static int32_t set_channel(transceiver_type_t t, void *channel);
@@ -175,7 +182,7 @@ void transceiver_init(transceiver_type_t t)
     }
 
     /* check if a non defined bit is set */
-    if (t & ~(TRANSCEIVER_CC1100 | TRANSCEIVER_CC2420 | TRANSCEIVER_MC1322X | TRANSCEIVER_NATIVE | TRANSCEIVER_AT86RF231)) {
+    if (t & ~(TRANSCEIVER_CC1100 | TRANSCEIVER_CC2420 | TRANSCEIVER_MC1322X | TRANSCEIVER_NATIVE | TRANSCEIVER_AT86RF231 | TRANSCEIVER_TI_EMAC)) {
         puts("Invalid transceiver type");
     }
     else {
@@ -232,6 +239,11 @@ kernel_pid_t transceiver_start(void)
         nativenet_init(transceiver_pid);
     }
 
+#endif
+#ifdef MODULE_TI_EMAC
+	else if (transceivers & TRANSCEIVER_TI_EMAC){
+		ti_emac_init(transceiver_pid);
+	}
 #endif
     return transceiver_pid;
 }
@@ -301,6 +313,7 @@ static void *run(void *arg)
             case RCV_PKT_MC1322X:
             case RCV_PKT_NATIVE:
             case RCV_PKT_AT86RF231:
+            case RCV_PKT_TI_EMAC:
                 receive_packet(m.type, m.content.value);
                 break;
 
@@ -420,6 +433,10 @@ static void receive_packet(uint16_t type, uint8_t pos)
             t = TRANSCEIVER_AT86RF231;
             break;
 
+		case RCV_PKT_TI_EMAC:
+			t = TRANSCEIVER_TI_EMAC;
+			break;
+
         default:
             t = TRANSCEIVER_NONE;
             break;
@@ -476,6 +493,12 @@ static void receive_packet(uint16_t type, uint8_t pos)
 #ifdef MODULE_NATIVENET
             radio_packet_t *trans_p = &(transceiver_buffer[transceiver_buffer_pos]);
             receive_nativenet_packet(trans_p);
+#endif
+        }
+        else if (type == RCV_PKT_TI_EMAC){
+#ifdef MODULE_TI_EMAC
+			radio_packet_t *trans_p = &(transceiver_buffer[transceiver_buffer_pos]);
+			receive_ti_emac_packet(trans_p);
 #endif
         }
         else {
@@ -668,6 +691,30 @@ void receive_nativenet_packet(radio_packet_t *trans_p)
 }
 #endif
 
+#ifdef MODULE_TI_EMAC
+void receive_ti_emac_packet(radio_packet_t *trans_p)
+{
+    unsigned state;
+    radio_packet_t *p = &_ti_emac_rx_buffer[rx_buffer_pos].packet;
+
+    /* disable interrupts while copying packet */
+    state = disableIRQ();
+
+    DEBUG("Handling ti_emac packet\n");
+
+    memcpy(trans_p, p, sizeof(radio_packet_t));
+    memcpy(&(data_buffer[transceiver_buffer_pos * PAYLOAD_SIZE]), p->data, p->length);
+    trans_p->data = (uint8_t *) &(data_buffer[transceiver_buffer_pos * PAYLOAD_SIZE]);
+
+    DEBUG("Packet %p was from %" PRIu16 " to %" PRIu16 ", size: %" PRIu8 "\n", trans_p, trans_p->src, trans_p->dst, trans_p->length);
+
+    /* reset interrupts */
+    restoreIRQ(state);
+}
+#endif
+
+
+
 #ifdef MODULE_AT86RF231
 void receive_at86rf231_packet(ieee802154_packet_t *trans_p)
 {
@@ -799,6 +846,12 @@ static int8_t send_packet(transceiver_type_t t, void *pkt)
             res = nativenet_send(p);
             break;
 #endif
+#ifdef MODULE_TI_EMAC
+		
+		case TRANSCEIVER_TI_EMAC:
+			res = ti_emac_send(p);
+			break;
+#endif
 #ifdef MODULE_AT86RF231
 
         case TRANSCEIVER_AT86RF231:
@@ -856,6 +909,10 @@ static int32_t set_channel(transceiver_type_t t, void *channel)
         case TRANSCEIVER_NATIVE:
             return nativenet_set_channel(c);
 #endif
+#ifdef MODULE_TI_EMAC
+		case TRANSCEIVER_TI_EMAC:
+			return ti_emac_set_channel(c);
+#endif
 #ifdef MODULE_AT86RF231
 
         case TRANSCEIVER_AT86RF231:
@@ -900,6 +957,10 @@ static int32_t get_channel(transceiver_type_t t)
 
         case TRANSCEIVER_NATIVE:
             return nativenet_get_channel();
+#endif
+#ifdef MODULE_TI_EMAC
+		case TRANSCEIVER_TI_EMAC:
+			return ti_emac_get_channel();
 #endif
 #ifdef MODULE_AT86RF231
 
@@ -1025,6 +1086,10 @@ static radio_address_t get_address(transceiver_type_t t)
         case TRANSCEIVER_NATIVE:
             return nativenet_get_address();
 #endif
+#ifdef MODULE_TI_EMAC
+		case TRANSCEIVER_TI_EMAC:
+			return ti_emac_get_address();
+#endif
 #ifdef MODULE_AT86RF231
 
         case TRANSCEIVER_AT86RF231:
@@ -1075,6 +1140,10 @@ static radio_address_t set_address(transceiver_type_t t, void *address)
 
         case TRANSCEIVER_NATIVE:
             return nativenet_set_address(addr);
+#endif
+#ifdef MODULE_TI_EMAC
+		case TRANSCEIVER_TI_EMAC:
+			return ti_emac_set_address(addr);
 #endif
 #ifdef MODULE_AT86RF231
 
@@ -1172,6 +1241,10 @@ static void set_monitor(transceiver_type_t t, void *mode)
             nativenet_set_monitor(*((uint8_t *) mode));
             break;
 #endif
+#ifdef MODULE_TI_EMAC
+		case TRANSCEIVER_TI_EMAC:
+			ti_emac_set_monitor(*((uint8_t *) mode));
+#endif
 #ifdef MODULE_AT86RF231
 
         case TRANSCEIVER_AT86RF231:
@@ -1217,6 +1290,11 @@ static void powerdown(transceiver_type_t t)
             nativenet_powerdown();
             break;
 #endif
+#ifdef MODULE_TI_EMAC
+		case TRANSCEIVER_TI_EMAC:
+			ti_emac_powerdown();
+			break;
+#endif
 
         default:
             break;
@@ -1245,6 +1323,11 @@ static void switch_to_rx(transceiver_type_t t)
         case TRANSCEIVER_NATIVE:
             nativenet_switch_to_rx();
             break;
+#endif
+#ifdef MODULE_TI_EMAC
+		case TRANSCEIVER_TI_EMAC:
+			ti_emac_switch_to_rx();
+			break;
 #endif
 #ifdef MODULE_AT86RF231
 
