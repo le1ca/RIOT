@@ -7,10 +7,18 @@
 #include "kernel.h"
 #include "netdev/base.h"
 #include "radio/types.h"
+#include "driverlib/emac.h"
+#include "driverlib/hw_emac.h"
 
 #define RX_BUF_SIZE (10)
 #define TI_EMAC_MAX_DATA_LENGTH 1500
 #define TRANSCEIVER_BUFFER_SIZE 10
+
+#ifndef EMAC_PHY_CONFIG
+#define EMAC_PHY_CONFIG         (EMAC_PHY_TYPE_INTERNAL |                     \
+                                 EMAC_PHY_INT_MDIX_EN |                       \
+                                 EMAC_PHY_AN_100B_T_FULL_DUPLEX)
+#endif
 
 struct rx_buffer_s {
     radio_packet_t packet;

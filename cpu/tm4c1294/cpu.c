@@ -23,13 +23,16 @@
 #include "driverlib/rom.h"
 #include "driverlib/sysctl.h"
 
+uint32_t ti_clock_hz;
+
 /**
  * @brief Initialize the CPU, set IRQ priorities
  */
 void cpu_init(void)
 {
     /* Set the clocking to run directly from the crystal */
-    SysCtlClockFreqSet((SYSCTL_XTAL_25MHZ | SYSCTL_OSC_MAIN | SYSCTL_USE_PLL | SYSCTL_CFG_VCO_480), 120000000UL);
+    SysCtlMOSCConfigSet(SYSCTL_MOSC_HIGHFREQ);
+    ti_clock_hz = SysCtlClockFreqSet((SYSCTL_XTAL_25MHZ | SYSCTL_OSC_MAIN | SYSCTL_USE_PLL | SYSCTL_CFG_VCO_480), 120000000UL);
 
     /* set pendSV interrupt to lowest possible priority */
     NVIC_SetPriority(PendSV_IRQn, 0xff);

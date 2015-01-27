@@ -23,6 +23,8 @@
 
 #include "tm4c1294ncpdt.h"
 
+extern uint32_t ti_clock_hz;
+
 /**
  * @name Kernel configuration
  *

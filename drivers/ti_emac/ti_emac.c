@@ -16,9 +16,7 @@
 #include "cpu.h"
 #include "netdev/base.h"
 #include "driverlib/rom.h"
-#include "driverlib/emac.h"
 #include "driverlib/sysctl.h"
-#include "driverlib/hw_emac.h"
 
 #define ENABLE_DEBUG    (0)
 #include "debug.h"
@@ -188,8 +186,8 @@ int ti_emac_initialize(netdev_t *dev)
 	while(!ROM_SysCtlPeripheralReady(SYSCTL_PERIPH_EMAC0));
     
     // configure internal emac
-    ROM_EMACPHYConfigSet(EMAC0_BASE, EMAC_PHY_TYPE_INTERNAL);
-    ROM_EMACInit(EMAC0_BASE, F_CPU,
+    ROM_EMACPHYConfigSet(EMAC0_BASE, EMAC_PHY_CONFIG);
+    ROM_EMACInit(EMAC0_BASE, ti_clock_hz,
                  EMAC_BCONFIG_MIXED_BURST | EMAC_BCONFIG_PRIORITY_FIXED,
                  4, 4, 0);
 	ROM_EMACConfigSet(EMAC0_BASE, (EMAC_CONFIG_FULL_DUPLEX |
@@ -204,17 +202,7 @@ int ti_emac_initialize(netdev_t *dev)
                        EMAC_MODE_TX_THRESHOLD_64_BYTES |
                        EMAC_MODE_RX_THRESHOLD_64_BYTES), 0);
 	ROM_EMACAddrSet(EMAC0_BASE, 0, (uint8_t *) pmac);
-	
-	// enable tx and rx
-	ROM_EMACTxEnable(EMAC0_BASE);
-	ROM_EMACRxEnable(EMAC0_BASE);
 
-	// enable tx, rx interrupts
-	ROM_EMACIntEnable(EMAC0_BASE, (EMAC_INT_RECEIVE | EMAC_INT_TRANSMIT |
-                EMAC_INT_TX_STOPPED | EMAC_INT_RX_NO_BUFFER |
-                EMAC_INT_RX_STOPPED | EMAC_INT_PHY));
-	ROM_IntEnable(EMAC0_IRQn);
-	
 	// set up DMA
 	ti_emac_dma_init();
 	
@@ -236,7 +224,34 @@ int ti_emac_initialize(netdev_t *dev)
 	// enable mac filtering - allow broadcast, multicast, and unicast for us
 	ROM_EMACFrameFilterSet(EMAC0_BASE, (EMAC_FRMFILTER_HASH_AND_PERFECT |
                      EMAC_FRMFILTER_PASS_MULTICAST));
+                     
+	ROM_EMACTimestampConfigSet(EMAC0_BASE, (EMAC_TS_ALL_RX_FRAMES |
+                         EMAC_TS_DIGITAL_ROLLOVER |
+                         EMAC_TS_PROCESS_IPV4_UDP | EMAC_TS_ALL |
+                         EMAC_TS_PTP_VERSION_1 | EMAC_TS_UPDATE_FINE),
+                         (1000000000 / (25000000 / 2)));
+	ROM_EMACTimestampAddendSet(EMAC0_BASE, 0x80000000);
+	ROM_EMACTimestampEnable(EMAC0_BASE);
+                     
+	// clear interrupts 
+	ROM_EMACIntClear(EMAC0_BASE, ROM_EMACIntStatus(EMAC0_BASE, false));
+                     
+	// enable tx and rx
+	ROM_EMACTxEnable(EMAC0_BASE);
+	ROM_EMACRxEnable(EMAC0_BASE);
 
+	// enable tx, rx interrupts
+	ROM_EMACIntEnable(EMAC0_BASE, (EMAC_INT_RECEIVE | EMAC_INT_TRANSMIT |
+                EMAC_INT_TX_STOPPED | EMAC_INT_RX_NO_BUFFER |
+                EMAC_INT_RX_STOPPED | EMAC_INT_PHY));
+	NVIC_SetPriority(EMAC0_IRQn, 0xc0);
+    NVIC_EnableIRQ(EMAC0_IRQn);
+	//ROM_IntEnable(EMAC0_IRQn);
+	//ROM_IntMasterEnable();
+
+	// negotiate link
+	ROM_EMACPHYWrite(EMAC0_BASE, PHY_PHYS_ADDR, EPHY_BMCR, (EPHY_BMCR_ANEN |
+               EPHY_BMCR_RESTARTAN));
 	
 	printf("[emac] init finished\n");
 
@@ -275,12 +290,99 @@ void ti_emac_switch_to_rx(void){
 	
 }
 
+void process_phy_interrupt(void);
+
 void isr_emac0(void){
+
+	//puts("ethernet interrupt");
+
 	uint32_t status = ROM_EMACIntStatus(EMAC0_BASE, true);
 	if(status){
 		ROM_EMACIntClear(EMAC0_BASE, status);
 	}
-	printf("[emac] interrupt (status = %x)\n", status);
+	
+	if(status & EMAC_INT_NORMAL_INT){
+		printf("emac0 normal int\n");
+	}
+	
+	if(status & EMAC_INT_ABNORMAL_INT){
+		printf("emac0 abnormal int\n");
+	}
+	
+	if(status & EMAC_INT_PHY){
+      process_phy_interrupt();
+	}
+
+
+	if(status & EMAC_INT_TRANSMIT){
+		printf("emac0 tx int\n");
+      //tivaif_process_transmit(tivaif);
+	}
+
+	if(status & (EMAC_INT_RECEIVE | EMAC_INT_RX_NO_BUFFER | EMAC_INT_RX_STOPPED)){
+		printf("emac0 rx int\n");
+      //tivaif_receive(psNetif);
+	}
+}
+
+inline void process_phy_interrupt(void){
+    uint16_t ui16Val, ui16Status;
+    uint32_t ui32Config, ui32Mode, ui32RxMaxFrameSize;
+
+    /* Read the PHY interrupt status.  This clears all interrupt sources.
+     * Note that we are only enabling sources in EPHY_MISR1 so we don't
+     * read EPHY_MISR2.
+     */
+    ui16Val = ROM_EMACPHYRead(EMAC0_BASE, PHY_PHYS_ADDR, EPHY_MISR1);
+
+    /* Read the current PHY status. */
+    ui16Status = ROM_EMACPHYRead(EMAC0_BASE, PHY_PHYS_ADDR, EPHY_STS);
+
+    /* Has the link status changed? */
+    if(ui16Val & EPHY_MISR1_LINKSTAT){
+        /* Is link up or down now? */
+        if(ui16Status & EPHY_STS_LINK){
+            // netif_set_link_up(psNetif);
+        }
+        else{
+            // netif_set_link_down(psNetif);
+        }
+    }
+
+    /* Has the speed or duplex status changed? */
+    if(ui16Val & (EPHY_MISR1_SPEED | EPHY_MISR1_SPEED | EPHY_MISR1_ANC)){
+        /* Get the current MAC configuration. */
+        ROM_EMACConfigGet(EMAC0_BASE, &ui32Config, &ui32Mode,
+                        &ui32RxMaxFrameSize);
+
+        /* What speed is the interface running at now?
+         */
+        if(ui16Status & EPHY_STS_SPEED)
+        {
+            /* 10Mbps is selected */
+            ui32Config &= ~EMAC_CONFIG_100MBPS;
+        }
+        else
+        {
+            /* 100Mbps is selected */
+            ui32Config |= EMAC_CONFIG_100MBPS;
+        }
+
+        /* Are we in fui32l- or half-duplex mode? */
+        if(ui16Status & EPHY_STS_DUPLEX)
+        {
+            /* Fui32l duplex. */
+            ui32Config |= EMAC_CONFIG_FULL_DUPLEX;
+        }
+        else
+        {
+            /* Half duplex. */
+            ui32Config &= ~EMAC_CONFIG_FULL_DUPLEX;
+        }
+
+        /* Reconfigure the MAC */
+        ROM_EMACConfigSet(EMAC0_BASE, ui32Config, ui32Mode, ui32RxMaxFrameSize);
+    }
 }
 
 /*
