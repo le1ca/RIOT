@@ -1,15 +1,4 @@
-
 #include "ti_emac.h"
-
-/*
-
-#include "cc110x-internal.h"
-
-#include "periph/gpio.h"
-#include "periph/spi.h"
-
-*/
-
 #include "transceiver.h"
 #include "hwtimer.h"
 #include "config.h"
@@ -18,53 +7,13 @@
 #include "driverlib/rom.h"
 #include "driverlib/sysctl.h"
 
-#define ENABLE_DEBUG    (0)
-#include "debug.h"
-
-/* Internal function prototypes */
-/*
-static int rd_set_mode(int mode);
-static void reset(void);
-static void power_up_reset(void);
-static void write_register(uint8_t r, uint8_t value)
-*/;
-
-/* External variables */
-
-//extern uint8_t pa_table[];                      /* PATABLE with available output powers */
-//extern uint8_t pa_table_index;                  /* Current PATABLE Index */
-
-/* Global variables */
-//cc110x_statistic_t cc110x_statistic;            /* Statistic values for debugging */
-
-//volatile cc110x_flags rflags;                   /* Radio control flags */
-//volatile uint8_t radio_state = RADIO_UNKNOWN;   /* Radio state */
-
-//static radio_address_t radio_address;
-//static uint8_t radio_channel;                   /* Radio channel */
-
-struct rx_buffer_s _ti_emac_rx_buffer[RX_BUF_SIZE];
-
-#ifndef NUM_RX_DESCRIPTORS
-#define NUM_RX_DESCRIPTORS 4
-#endif
-
-#ifndef NUM_TX_DESCRIPTORS
-#define NUM_TX_DESCRIPTORS 8
-#endif
-
-#define NUM_RX_BUFFERS 10
-#define NUM_TX_BUFFERS 10
-
-#define BUFFER_SIZE 512
-
-#define PHY_PHYS_ADDR 0
-
+/* DMA descriptor management structure */
 typedef struct {
   tEMACDMADescriptor Desc;
   struct tpbuffer *pBuf;
 } tDescriptor;
 
+/* DMA descriptor list */
 typedef struct {
     tDescriptor *pDescriptors;
     uint32_t ui32NumDescs;
@@ -72,39 +21,79 @@ typedef struct {
     uint32_t ui32Write;
 } tDescriptorList;
 
+/* Packet buffer structure */
 typedef struct tpbuffer {
 	uint16_t len;
-	uint8_t  p[BUFFER_SIZE];
+	uint8_t  p[TI_EMAC_BUFFER_SIZE];
 	uint8_t  free;
 	struct tpbuffer *next;
 	uint16_t tot_len;
 } tpbuffer;
 
-tDescriptor g_pTxDescriptors[NUM_TX_DESCRIPTORS];
-tDescriptor g_pRxDescriptors[NUM_RX_DESCRIPTORS];
+/* Ethernet header structure */
+struct eth_hdr {
+  uint8_t  dest[6];
+  uint8_t  src[6];
+  uint16_t type;
+};
 
-tpbuffer rxbuffers[NUM_RX_BUFFERS];
-tpbuffer txbuffers[NUM_TX_BUFFERS];
 
+/* Buffer management functions */
+tpbuffer *ti_emac_alloc_buf(tpbuffer *pool);
+void ti_emac_free_buf(tpbuffer *buf);
+void ti_emac_buf_cat(tpbuffer *a, tpbuffer *b);
+void ti_emac_init_bufs(void);
+
+/* ISR helpers */
+void process_phy_interrupt(void);
+void process_tx_interrupt(void);
+void process_rx_interrupt(void);
+
+/* Rx buffer */
+struct rx_buffer_s _ti_emac_rx_buffer[RX_BUF_SIZE];
+
+/* DMA descriptors */
+tDescriptor g_pTxDescriptors[TI_EMAC_NUM_TX_DESCRIPTORS];
+tDescriptor g_pRxDescriptors[TI_EMAC_NUM_RX_DESCRIPTORS];
+
+/* DMA descriptor lists */
 tDescriptorList g_TxDescList = {
-    g_pTxDescriptors, NUM_TX_DESCRIPTORS, 0, 0
+    g_pTxDescriptors, TI_EMAC_NUM_TX_DESCRIPTORS, 0, 0
 };
 tDescriptorList g_RxDescList = {
-    g_pRxDescriptors, NUM_RX_DESCRIPTORS, 0, 0
+    g_pRxDescriptors, TI_EMAC_NUM_RX_DESCRIPTORS, 0, 0
 };
 
-tpbuffer *alloc_buf(tpbuffer *pool);
-void free_buf(tpbuffer *buf);
-void ti_emac_buf_cat(tpbuffer *a, tpbuffer *b);
+/* Packet buffers */
+tpbuffer rxbuffers[TI_EMAC_NUM_RX_BUFFERS];
+tpbuffer txbuffers[TI_EMAC_NUM_TX_BUFFERS];
 
-tpbuffer *alloc_buf(tpbuffer pool[]){
+/* Initialize buffers (mark all as free) */
+inline void ti_emac_init_bufs(void){
+	int i;
+	for(i = 0; i < TI_EMAC_NUM_RX_BUFFERS; i++){
+		rxbuffers[i].len     = TI_EMAC_BUFFER_SIZE;
+		rxbuffers[i].free    = 1;
+		rxbuffers[i].next    = 0;
+		rxbuffers[i].tot_len = TI_EMAC_BUFFER_SIZE;
+	}
+	for(i = 0; i < TI_EMAC_NUM_TX_BUFFERS; i++){
+		txbuffers[i].len     = TI_EMAC_BUFFER_SIZE;
+		txbuffers[i].free    = 1;
+		txbuffers[i].next    = 0;
+		txbuffers[i].tot_len = TI_EMAC_BUFFER_SIZE;
+	}
+}
+
+/* Find a free buffer and clear its free flag */
+tpbuffer *ti_emac_alloc_buf(tpbuffer pool[]){
 	tpbuffer *r = 0;
 	uint8_t i;
-	for(i = 0; i < NUM_RX_BUFFERS; i++){
+	for(i = 0; i < TI_EMAC_NUM_RX_BUFFERS; i++){
 		if(pool[i].free){
 			r = &pool[i];
-			r->len = BUFFER_SIZE;
-			r->tot_len = BUFFER_SIZE;
+			r->len = TI_EMAC_BUFFER_SIZE;
+			r->tot_len = TI_EMAC_BUFFER_SIZE;
 			r->next = 0;
 			r->free = 0;
 			break;
@@ -113,13 +102,15 @@ tpbuffer *alloc_buf(tpbuffer pool[]){
 	return r;
 }
 
-void free_buf(tpbuffer *buf){
-	buf->len = BUFFER_SIZE;
-	buf->tot_len = BUFFER_SIZE;
+/* Restore the free flag of a buffer */
+void ti_emac_free_buf(tpbuffer *buf){
+	buf->len = TI_EMAC_BUFFER_SIZE;
+	buf->tot_len = TI_EMAC_BUFFER_SIZE;
 	buf->next = 0;
-	buf->free = 0;
+	buf->free = 1;
 }
 
+/* Chain two buffers together */
 void ti_emac_buf_cat(tpbuffer *h, tpbuffer *t){
 	tpbuffer *p;
 	for (p = h; p->next != NULL; p = p->next) {
@@ -129,30 +120,98 @@ void ti_emac_buf_cat(tpbuffer *h, tpbuffer *t){
   	p->next = t;
 }
 
-/*---------------------------------------------------------------------------*
- *                           Radio Driver API                                *
- *---------------------------------------------------------------------------*/
+/* Print the headers of an ethernet packet (debugging) */
+inline void print_pkt(tpbuffer *p){
+  struct eth_hdr *ethhdr = (struct eth_hdr *)p->p;
+  
+  ethhdr->type = ntohs(ethhdr->type);
+  
+  printf("buf len: %d\n", p->len);
+  
+  if(ethhdr->type <= 1500){
+  	printf("Packet length: %d bytes\n", ethhdr->type);
+  }
+  else if(ethhdr->type >= 1536 ){
+  	printf("Packet Type: 0x%04x", ethhdr->type);
+  	switch(ethhdr->type){
+  		case 0x0800:
+  			printf(" (IPv4)");
+  			break;
+  		case 0x0806:
+  			printf(" (ARP)");
+  			break;
+  		case 0x0842:
+  			printf(" (Wake-on-LAN)");
+  			break;
+  		case 0x86DD:
+  			printf(" (IPV6)");
+  			break;
+  		case 0x8808:
+  			printf(" (Flow control)");
+  			break;
+  		case 0x8847:
+  		case 0x8848:
+  			printf(" (MPLS)");
+  			break;
+  		case 0x888e:
+  			printf(" (802.1x)");
+  			break;
+  		case 0x88cc:
+  			printf(" (LLDP)");
+  			break;
+  		default:
+  			printf(" (unknown)");
+  	}
+  	printf("\n");
+  }
+  else{
+  	printf("Invalid EtherType: 0x%04x\n", ethhdr->type);
+  }
+
+  printf("Destination: %02x:%02x:%02x:%02x:%02x:%02x\n",
+    ethhdr->dest[0],
+    ethhdr->dest[1],
+    ethhdr->dest[2],
+    ethhdr->dest[3],
+    ethhdr->dest[4],
+    ethhdr->dest[5]
+  );
+  printf("Source:      %02x:%02x:%02x:%02x:%02x:%02x\n",
+    ethhdr->src[0],
+    ethhdr->src[1],
+    ethhdr->src[2],
+    ethhdr->src[3],
+    ethhdr->src[4],
+    ethhdr->src[5]
+  );
+  
+  if(p->next){
+  	printf("chained: \n");
+  	print_pkt(p->next);
+  }
+  
+}
+
 #ifdef MODULE_TRANSCEIVER
-void ti_emac_init(kernel_pid_t tpid)
-{
-	puts("init emac");
+void ti_emac_init(kernel_pid_t tpid){
     transceiver_pid = tpid;
-    DEBUG("Transceiver PID: %" PRIkernel_pid "\n", transceiver_pid);
-    ti_emac_initialize(NULL); /* TODO */
+    ti_emac_initialize(NULL);
 }
 #endif
 
+/* Initialize DMA descriptors and pass them to the hardware */
 inline void ti_emac_dma_init(void){
 	uint32_t ui32Loop;
+	
+	ti_emac_init_bufs();
 
     /* Transmit list -  mark all descriptors as not owned by the hardware */
-   for(ui32Loop = 0; ui32Loop < NUM_TX_DESCRIPTORS; ui32Loop++)
-   {
+   for(ui32Loop = 0; ui32Loop < TI_EMAC_NUM_TX_DESCRIPTORS; ui32Loop++){
        g_pTxDescriptors[ui32Loop].pBuf = (struct tpbuffer *)0;
        g_pTxDescriptors[ui32Loop].Desc.ui32Count = 0;
        g_pTxDescriptors[ui32Loop].Desc.pvBuffer1 = 0;
        g_pTxDescriptors[ui32Loop].Desc.DES3.pLink =
-               ((ui32Loop == (NUM_TX_DESCRIPTORS - 1)) ?
+               ((ui32Loop == (TI_EMAC_NUM_TX_DESCRIPTORS - 1)) ?
                &g_pTxDescriptors[0].Desc : &g_pTxDescriptors[ui32Loop + 1].Desc);
        g_pTxDescriptors[ui32Loop].Desc.ui32CtrlStatus = DES0_TX_CTRL_INTERRUPT |
                DES0_TX_CTRL_CHAINED | DES0_TX_CTRL_IP_ALL_CKHSUMS;
@@ -162,40 +221,24 @@ inline void ti_emac_dma_init(void){
    g_TxDescList.ui32Read = 0;
    g_TxDescList.ui32Write = 0;
 
-
    /* Receive list -  tag each descriptor with a pbuf and set all fields to
     * allow packets to be received.
     */
-  for(ui32Loop = 0; ui32Loop < NUM_RX_DESCRIPTORS; ui32Loop++)
-  {
-      
-      g_pRxDescriptors[ui32Loop].pBuf = alloc_buf(rxbuffers);
-      /*
-      g_pRxDescriptors[ui32Loop].pBuf = &rxbuffers[ui32Loop];
-      g_pRxDescriptors[ui32Loop].pBuf->len = 512;
-      g_pRxDescriptors[ui32Loop].pBuf->tot_len = 512;
-      g_pRxDescriptors[ui32Loop].pBuf->next = 0;
-      g_pRxDescriptors[ui32Loop].pBuf->free = 1;
-      */
-      
-      
+  for(ui32Loop = 0; ui32Loop < TI_EMAC_NUM_RX_DESCRIPTORS; ui32Loop++){
+      g_pRxDescriptors[ui32Loop].pBuf = ti_emac_alloc_buf(rxbuffers);      
       g_pRxDescriptors[ui32Loop].Desc.ui32Count = DES1_RX_CTRL_CHAINED;
-      if(g_pRxDescriptors[ui32Loop].pBuf)
-      {
+      if(g_pRxDescriptors[ui32Loop].pBuf){
           /* Set the DMA to write directly into the pbuf payload. */
-          g_pRxDescriptors[ui32Loop].Desc.pvBuffer1 =
-                  g_pRxDescriptors[ui32Loop].pBuf->p;
-          g_pRxDescriptors[ui32Loop].Desc.ui32Count |=
-             (g_pRxDescriptors[ui32Loop].pBuf->len << DES1_RX_CTRL_BUFF1_SIZE_S);
+          g_pRxDescriptors[ui32Loop].Desc.pvBuffer1  = g_pRxDescriptors[ui32Loop].pBuf->p;
+          g_pRxDescriptors[ui32Loop].Desc.ui32Count |= (g_pRxDescriptors[ui32Loop].pBuf->len << DES1_RX_CTRL_BUFF1_SIZE_S);
           g_pRxDescriptors[ui32Loop].Desc.ui32CtrlStatus = DES0_RX_CTRL_OWN;
       }
-      else
-      {
+      else{
           g_pRxDescriptors[ui32Loop].Desc.pvBuffer1 = 0;
           g_pRxDescriptors[ui32Loop].Desc.ui32CtrlStatus = 0;
       }
       g_pRxDescriptors[ui32Loop].Desc.DES3.pLink =
-              ((ui32Loop == (NUM_RX_DESCRIPTORS - 1)) ?
+              ((ui32Loop == (TI_EMAC_NUM_RX_DESCRIPTORS - 1)) ?
               &g_pRxDescriptors[0].Desc : &g_pRxDescriptors[ui32Loop + 1].Desc);
   }
 
@@ -209,15 +252,15 @@ inline void ti_emac_dma_init(void){
   ROM_EMACTxDMADescriptorListSet(EMAC0_BASE, &g_pTxDescriptors[0].Desc);
 }
 
-int ti_emac_initialize(netdev_t *dev)
-{
+/* Initialize the EMAC hardware */
+int ti_emac_initialize(netdev_t *dev){
 	uint32_t umac0, umac1;
 	uint8_t  pmac[8];
 	
 	// get mac and convert to byte array
 	ROM_FlashUserGet(&umac0, &umac1);
     if((umac0 == 0xffffffff) || (umac1 == 0xffffffff)){
-        puts("[emac] no MAC configured in user registers");
+        puts("[emac] no MAC configured in user registers - not enabling emac0");
         return -1;
     }
 	pmac[0] = ((umac0 >>  0) & 0xff);
@@ -239,7 +282,7 @@ int ti_emac_initialize(netdev_t *dev)
 	while(!ROM_SysCtlPeripheralReady(SYSCTL_PERIPH_EMAC0));
     
     // configure internal emac
-    ROM_EMACPHYConfigSet(EMAC0_BASE, EMAC_PHY_CONFIG);
+    ROM_EMACPHYConfigSet(EMAC0_BASE, TI_EMAC_PHY_CONFIG);
     ROM_EMACInit(EMAC0_BASE, ti_clock_hz,
                  EMAC_BCONFIG_MIXED_BURST | EMAC_BCONFIG_PRIORITY_FIXED,
                  4, 4, 0);
@@ -260,31 +303,32 @@ int ti_emac_initialize(netdev_t *dev)
 	ti_emac_dma_init();
 	
 	// clear stray interrupts
-	ROM_EMACPHYRead(EMAC0_BASE, PHY_PHYS_ADDR, EPHY_MISR1);
-  	ROM_EMACPHYRead(EMAC0_BASE, PHY_PHYS_ADDR, EPHY_MISR2);
+	ROM_EMACPHYRead(EMAC0_BASE, TI_EMAC_PHY_PHYS_ADDR, EPHY_MISR1);
+  	ROM_EMACPHYRead(EMAC0_BASE, TI_EMAC_PHY_PHYS_ADDR, EPHY_MISR2);
 
 	// configure interrupts for status change
 	uint16_t status;
-  	status = ROM_EMACPHYRead(EMAC0_BASE, PHY_PHYS_ADDR, EPHY_SCR);
+  	status = ROM_EMACPHYRead(EMAC0_BASE, TI_EMAC_PHY_PHYS_ADDR, EPHY_SCR);
   	status |= (EPHY_SCR_INTEN_EXT | EPHY_SCR_INTOE_EXT);
-	ROM_EMACPHYWrite(EMAC0_BASE, PHY_PHYS_ADDR, EPHY_SCR, status);
-	ROM_EMACPHYWrite(EMAC0_BASE, PHY_PHYS_ADDR, EPHY_MISR1, (EPHY_MISR1_LINKSTATEN |
+	ROM_EMACPHYWrite(EMAC0_BASE, TI_EMAC_PHY_PHYS_ADDR, EPHY_SCR, status);
+	ROM_EMACPHYWrite(EMAC0_BASE, TI_EMAC_PHY_PHYS_ADDR, EPHY_MISR1, (EPHY_MISR1_LINKSTATEN |
                EPHY_MISR1_SPEEDEN | EPHY_MISR1_DUPLEXMEN | EPHY_MISR1_ANCEN));
 
 	// clear stray interrupts
-  	ROM_EMACPHYRead(EMAC0_BASE, PHY_PHYS_ADDR, EPHY_MISR1);
+  	ROM_EMACPHYRead(EMAC0_BASE, TI_EMAC_PHY_PHYS_ADDR, EPHY_MISR1);
 
 	// enable mac filtering - allow broadcast, multicast, and unicast for us
 	ROM_EMACFrameFilterSet(EMAC0_BASE, (EMAC_FRMFILTER_HASH_AND_PERFECT |
                      EMAC_FRMFILTER_PASS_MULTICAST));
                      
-	ROM_EMACTimestampConfigSet(EMAC0_BASE, (EMAC_TS_ALL_RX_FRAMES |
-                         EMAC_TS_DIGITAL_ROLLOVER |
-                         EMAC_TS_PROCESS_IPV4_UDP | EMAC_TS_ALL |
-                         EMAC_TS_PTP_VERSION_1 | EMAC_TS_UPDATE_FINE),
-                         (1000000000 / (25000000 / 2)));
-	ROM_EMACTimestampAddendSet(EMAC0_BASE, 0x80000000);
-	ROM_EMACTimestampEnable(EMAC0_BASE);
+	// TODO: Precision time protocol
+	//ROM_EMACTimestampConfigSet(EMAC0_BASE, (EMAC_TS_ALL_RX_FRAMES |
+    //                     EMAC_TS_DIGITAL_ROLLOVER |
+    //                     EMAC_TS_PROCESS_IPV4_UDP | EMAC_TS_ALL |
+    //                     EMAC_TS_PTP_VERSION_1 | EMAC_TS_UPDATE_FINE),
+    //                     (1000000000 / (25000000 / 2)));
+	//ROM_EMACTimestampAddendSet(EMAC0_BASE, 0x80000000);
+	//ROM_EMACTimestampEnable(EMAC0_BASE);
                      
 	// clear interrupts 
 	ROM_EMACIntClear(EMAC0_BASE, ROM_EMACIntStatus(EMAC0_BASE, false));
@@ -299,11 +343,9 @@ int ti_emac_initialize(netdev_t *dev)
                 EMAC_INT_RX_STOPPED | EMAC_INT_PHY));
 	NVIC_SetPriority(EMAC0_IRQn, 0xc0);
     NVIC_EnableIRQ(EMAC0_IRQn);
-	//ROM_IntEnable(EMAC0_IRQn);
-	//ROM_IntMasterEnable();
 
 	// negotiate link
-	ROM_EMACPHYWrite(EMAC0_BASE, PHY_PHYS_ADDR, EPHY_BMCR, (EPHY_BMCR_ANEN |
+	ROM_EMACPHYWrite(EMAC0_BASE, TI_EMAC_PHY_PHYS_ADDR, EPHY_BMCR, (EPHY_BMCR_ANEN |
                EPHY_BMCR_RESTARTAN));
 	
 	printf("[emac] init finished\n");
@@ -311,45 +353,48 @@ int ti_emac_initialize(netdev_t *dev)
     return 0;
 }
 
+/* TODO: place packet in tx buffers */
 int ti_emac_send(radio_packet_t *p){
 	return 1;
 }
 
+/* Does nothing */
 int ti_emac_set_channel(uint8_t c){
 	return 0;
 }
 
+/* Does nothing */
 uint8_t ti_emac_get_channel(void){
 	return 0;
 }
 
+/* Does nothing */
 int ti_emac_set_address(radio_address_t addr){
 	return 0;
 }
 
+/* Does nothing */
 radio_address_t ti_emac_get_address(void){
 	return 0;
 }
 
+/* Does nothing */
 void ti_emac_set_monitor(uint8_t mode){
 	(void) mode;
 }
 
+/* TODO */
 void ti_emac_powerdown(void){
 
 }
 
+/* TODO */
 void ti_emac_switch_to_rx(void){
 	
 }
 
-void process_phy_interrupt(void);
-void process_tx_interrupt(void);
-void process_rx_interrupt(void);
-
+/* Main ISR for emac interrupt */
 void isr_emac0(void){
-
-	//puts("ethernet interrupt");
 
 	uint32_t status = ROM_EMACIntStatus(EMAC0_BASE, true);
 	if(status){
@@ -357,11 +402,11 @@ void isr_emac0(void){
 	}
 	
 	if(status & EMAC_INT_NORMAL_INT){
-		printf("emac0 normal int\n");
+		//printf("[emac0] normal int\n");
 	}
 	
 	if(status & EMAC_INT_ABNORMAL_INT){
-		printf("emac0 abnormal int\n");
+		printf("[emac0] abnormal int\n");
 	}
 	
 	if(status & EMAC_INT_PHY){
@@ -369,16 +414,16 @@ void isr_emac0(void){
 	}
 
 	if(status & EMAC_INT_TRANSMIT){
-		//printf("emac0 tx int\n");
+		printf("[emac0] tx int\n");
         process_tx_interrupt();
 	}
 
 	if(status & (EMAC_INT_RECEIVE | EMAC_INT_RX_NO_BUFFER | EMAC_INT_RX_STOPPED)){
-		//printf("emac0 rx int\n");
         process_rx_interrupt();
 	}
 }
 
+/* PHY interrupt: renegotiate link parameters */
 inline void process_phy_interrupt(void){
     uint16_t ui16Val, ui16Status;
     uint32_t ui32Config, ui32Mode, ui32RxMaxFrameSize;
@@ -387,10 +432,10 @@ inline void process_phy_interrupt(void){
      * Note that we are only enabling sources in EPHY_MISR1 so we don't
      * read EPHY_MISR2.
      */
-    ui16Val = ROM_EMACPHYRead(EMAC0_BASE, PHY_PHYS_ADDR, EPHY_MISR1);
+    ui16Val = ROM_EMACPHYRead(EMAC0_BASE, TI_EMAC_PHY_PHYS_ADDR, EPHY_MISR1);
 
     /* Read the current PHY status. */
-    ui16Status = ROM_EMACPHYRead(EMAC0_BASE, PHY_PHYS_ADDR, EPHY_STS);
+    ui16Status = ROM_EMACPHYRead(EMAC0_BASE, TI_EMAC_PHY_PHYS_ADDR, EPHY_STS);
 
     /* Has the link status changed? */
     if(ui16Val & EPHY_MISR1_LINKSTAT){
@@ -411,25 +456,21 @@ inline void process_phy_interrupt(void){
 
         /* What speed is the interface running at now?
          */
-        if(ui16Status & EPHY_STS_SPEED)
-        {
+        if(ui16Status & EPHY_STS_SPEED){
             /* 10Mbps is selected */
             ui32Config &= ~EMAC_CONFIG_100MBPS;
         }
-        else
-        {
+        else{
             /* 100Mbps is selected */
             ui32Config |= EMAC_CONFIG_100MBPS;
         }
 
         /* Are we in fui32l- or half-duplex mode? */
-        if(ui16Status & EPHY_STS_DUPLEX)
-        {
+        if(ui16Status & EPHY_STS_DUPLEX){
             /* Fui32l duplex. */
             ui32Config |= EMAC_CONFIG_FULL_DUPLEX;
         }
-        else
-        {
+        else{
             /* Half duplex. */
             ui32Config &= ~EMAC_CONFIG_FULL_DUPLEX;
         }
@@ -439,6 +480,7 @@ inline void process_phy_interrupt(void){
     }
 }
 
+/* Tx interrupt: reclaim buffers that we gave to the DMA for transmission */
 inline void process_tx_interrupt(void){
     tDescriptorList *pDescList;
     uint32_t ui32NumDescs;
@@ -450,19 +492,16 @@ inline void process_tx_interrupt(void){
      * write pointer or find a descriptor that the hardware is still working
      * on.
      */
-    for(ui32NumDescs = 0; ui32NumDescs < pDescList->ui32NumDescs; ui32NumDescs++)
-    {
+    for(ui32NumDescs = 0; ui32NumDescs < pDescList->ui32NumDescs; ui32NumDescs++){
+    
         /* Has the buffer attached to this descriptor been transmitted? */
-        if(pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus &
-           DES0_TX_CTRL_OWN)
-        {
+        if(pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus & DES0_TX_CTRL_OWN){
             /* No - we're finished. */
             break;
         }
 
         /* Does this descriptor have a buffer attached to it? */
-        if(pDescList->pDescriptors[pDescList->ui32Read].pBuf)
-        {
+        if(pDescList->pDescriptors[pDescList->ui32Read].pBuf) {
             /* Yes - free it if it's not marked as an intermediate pbuf */
             //if(!((uint32_t)(pDescList->pDescriptors[pDescList->ui32Read].pBuf) & 1))
             //{
@@ -470,24 +509,23 @@ inline void process_tx_interrupt(void){
                 //pDescList->pDescriptors[pDescList->ui32Read].pBuf->free = 1;
                 //DRIVER_STATS_INC(TXBufFreedCount);
             //}
-            free_buf(pDescList->pDescriptors[pDescList->ui32Read].pBuf);
+            ti_emac_free_buf(pDescList->pDescriptors[pDescList->ui32Read].pBuf);
             //pDescList->pDescriptors[pDescList->ui32Read].pBuf = NULL;
         }
-        else
-        {
+        else{
             /* If the descriptor has no buffer, we are finished. */
             break;
         }
 
         /* Move on to the next descriptor. */
         pDescList->ui32Read++;
-        if(pDescList->ui32Read == pDescList->ui32NumDescs)
-        {
+        if(pDescList->ui32Read == pDescList->ui32NumDescs){
             pDescList->ui32Read = 0;
         }
     }
 }
 
+/* Rx interrupt: process buffers that the DMA gave to us */
 inline void process_rx_interrupt(void){
   tDescriptorList *pDescList;
   struct tpbuffer *pBuf;
@@ -505,15 +543,14 @@ inline void process_rx_interrupt(void){
   ui32DescEnd = pDescList->ui32Read ? (pDescList->ui32Read - 1) : (pDescList->ui32NumDescs - 1);
 
   /* Step through the descriptors that are marked for CPU attention. */
-  while(pDescList->ui32Read != ui32DescEnd)
-  {
+  while(pDescList->ui32Read != ui32DescEnd){
+  
+  
       /* Does the current descriptor have a buffer attached to it? */
-      if(pDescList->pDescriptors[pDescList->ui32Read].pBuf)
-      {
+      if(pDescList->pDescriptors[pDescList->ui32Read].pBuf){
+      
           /* Yes - determine if the host has filled it yet. */
-          if(pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus &
-             DES0_RX_CTRL_OWN)
-          {
+          if(pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus & DES0_RX_CTRL_OWN){
               /* The DMA engine still owns the descriptor so we are finished */
               break;
           }
@@ -523,9 +560,7 @@ inline void process_rx_interrupt(void){
           /* If this descriptor contains the end of the packet, fix up the
            * buffer size accordingly.
            */
-          if(pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus &
-             DES0_RX_STAT_LAST_DESC)
-          {
+          if(pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus & DES0_RX_STAT_LAST_DESC){
               /* This is the last descriptor for the frame so fix up the
                * length.  It is safe for us to modify the internal fields
                * directly here (rather than calling pbuf_realloc) since we
@@ -535,12 +570,11 @@ inline void process_rx_interrupt(void){
                        (pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus &
                         DES0_RX_STAT_FRAME_LENGTH_M) >>
                         DES0_RX_STAT_FRAME_LENGTH_S;
-              pDescList->pDescriptors[pDescList->ui32Read].pBuf->tot_len =
-                        pDescList->pDescriptors[pDescList->ui32Read].pBuf->len;
+              //pDescList->pDescriptors[pDescList->ui32Read].pBuf->tot_len =
+              //          pDescList->pDescriptors[pDescList->ui32Read].pBuf->len;
           }
 
-          if(pBuf)
-          {
+          if(pBuf){
               /* Link this pbuf to the last one we looked at since this buffer
                * is a continuation of an existing frame (split across mui32tiple
                * pbufs).  Note that we use pbuf_cat() here rather than
@@ -555,18 +589,14 @@ inline void process_rx_interrupt(void){
           pBuf = pDescList->pDescriptors[pDescList->ui32Read].pBuf;
 
           /* Is this the last descriptor for the current frame? */
-          if(pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus &
-             DES0_RX_STAT_LAST_DESC)
-          {
+          if(pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus & DES0_RX_STAT_LAST_DESC){
               /* Yes - does the frame contain errors? */
-              if(pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus &
-                 DES0_RX_STAT_ERR)
-              {
+              if(pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus & DES0_RX_STAT_ERR){
                   /* This is a bad frame so discard it and update the relevant
                    * statistics.
                    */
                   //LWIP_DEBUGF(NETIF_DEBUG, ("tivaif_receive: packet error\n"));
-                  free_buf(pBuf);
+                  ti_emac_free_buf(pBuf);
                   //LINK_STATS_INC(link.drop);
                   //DRIVER_STATS_INC(RXPacketErrCount);
                   puts("[emac] rx bad frame");
@@ -576,7 +606,10 @@ inline void process_rx_interrupt(void){
                   /* This is a good frame so pass it up the stack. */
                   //LINK_STATS_INC(link.recv);
                   //DRIVER_STATS_INC(RXPacketReadCount);
-                  puts("[emac] good frame");
+                  puts("[emac] rx good frame");
+                  // TODO: pass frame up to kernel
+                  print_pkt(pBuf);
+                  ti_emac_free_buf(pBuf);
 
 				/*
                   / * Place the timestamp in the PBUF if PTPD is enabled * /
@@ -607,7 +640,7 @@ inline void process_rx_interrupt(void){
       }
 
       /* Allocate a new buffer for this descriptor */
-      pDescList->pDescriptors[pDescList->ui32Read].pBuf = alloc_buf(rxbuffers);
+      pDescList->pDescriptors[pDescList->ui32Read].pBuf = ti_emac_alloc_buf(rxbuffers);
       pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32Count = DES1_RX_CTRL_CHAINED;
       if(pDescList->pDescriptors[pDescList->ui32Read].pBuf)
       {
@@ -621,11 +654,11 @@ inline void process_rx_interrupt(void){
           /* Give this descriptor back to the hardware */
           pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus =
                               DES0_RX_CTRL_OWN;
+                              
       }
       else
       {
           //LWIP_DEBUGF(NETIF_DEBUG, ("tivaif_receive: pbuf_alloc error\n"));
-
           pDescList->pDescriptors[pDescList->ui32Read].Desc.pvBuffer1 = 0;
 
           /* Update the stats to show we coui32dn't allocate a pbuf. */
@@ -646,299 +679,3 @@ inline void process_rx_interrupt(void){
       }
   }
 }
-
-/*
-
-uint8_t cc110x_get_buffer_pos(void)
-{
-    return (rx_buffer_next - 1);
-}
-
-radio_address_t cc110x_get_address(void)
-{
-    return radio_address;
-}
-
-radio_address_t cc110x_set_address(radio_address_t address)
-{
-    if ((address < MIN_UID) || (address > MAX_UID)) {
-        return 0;
-    }
-
-    uint8_t id = (uint8_t) address;
-
-    if (radio_state != RADIO_UNKNOWN) {
-        write_register(CC1100_ADDR, id);
-    }
-
-    radio_address = id;
-    return radio_address;
-}
-
-#ifdef MODULE_CONFIG
-radio_address_t cc110x_set_config_address(radio_address_t address)
-{
-    radio_address_t a = cc110x_set_address(address);
-
-    if (a) {
-        sysconfig.radio_address = a;
-    }
-
-    config_save();
-    return a;
-}
-#endif
-
-void cc110x_set_monitor(uint8_t mode)
-{
-    if (mode) {
-        write_register(CC1100_PKTCTRL1, (0x04));
-    }
-    else {
-        write_register(CC1100_PKTCTRL1, (0x06));
-    }
-}
-
-void cc110x_setup_rx_mode(void)
-{
-   / * Stay in RX mode until end of packet * /
-    cc110x_write_reg(CC1100_MCSM2, 0x07);
-    cc110x_switch_to_rx();
-}
-
-
-void cc110x_switch_to_rx(void)
-{
-    radio_state = RADIO_RX;
-    cc110x_strobe(CC1100_SRX);
-}
-
-void cc110x_wakeup_from_rx(void)
-{
-    if (radio_state != RADIO_RX) {
-        return;
-    }
-
-    DEBUG("CC110x going to idle\n");
-    cc110x_strobe(CC1100_SIDLE);
-    radio_state = RADIO_IDLE;
-}
-
-char *cc110x_get_marc_state(void)
-{
-    uint8_t state;
-
-    / * Save old radio state * /
-    uint8_t old_state = radio_state;
-
-    / * Read content of status register * /
-    state = cc110x_read_status(CC1100_MARCSTATE) & MARC_STATE;
-
-    / * Make sure in IDLE state.
-     * Only goes to IDLE if state was RX * /
-    cc110x_wakeup_from_rx();
-
-    / * Have to put radio back to RX if old radio state
-     * was RX, otherwise no action is necessary * /
-    if (old_state == RADIO_RX) {
-        cc110x_switch_to_rx();
-    }
-
-    switch(state) {
-            / * Note: it is not possible to read back the SLEEP or XOFF state numbers
-             * because setting CSn low will make the chip enter the IDLE mode from the
-             * SLEEP (0) or XOFF (2) states. * /
-        case 1:
-            return "IDLE";
-
-        case 3:
-        case 4:
-        case 5:
-            return "MANCAL";
-
-        case 6:
-        case 7:
-            return "FS_WAKEUP";
-
-        case 8:
-        case 12:
-            return "CALIBRATE";
-
-        case 9:
-        case 10:
-        case 11:
-            return "SETTLING";
-
-        case 13:
-        case 14:
-        case 15:
-            return "RX";
-
-        case 16:
-            return "TXRX_SETTLING";
-
-        case 17:
-            return "RXFIFO_OVERFLOW";
-
-        case 18:
-            return "FSTXON";
-
-        case 19:
-        case 20:
-            return "TX";
-
-        case 21:
-            return "RXTX_SETTLING";
-
-        case 22:
-            return "TXFIFO_UNDERFLOW";
-
-        default:
-            return "UNKNOWN";
-    }
-}
-
-char *cc110x_state_to_text(uint8_t state)
-{
-    switch(state) {
-        case RADIO_UNKNOWN:
-            return "Unknown";
-
-        case RADIO_IDLE:
-            return "IDLE";
-
-        case RADIO_SEND_BURST:
-            return "TX BURST";
-
-        case RADIO_RX:
-            return "RX";
-
-        case RADIO_PWD:
-            return "PWD";
-
-        default:
-            return "unknown";
-    }
-}
-
-void cc110x_print_config(void)
-{
-    printf("Current radio state:          %s\r\n", cc110x_state_to_text(radio_state));
-    printf("Current MARC state:           %s\r\n", cc110x_get_marc_state());
-    printf("Current channel number:       %u\r\n", radio_channel);
-}
-
-void cc110x_switch_to_pwd(void)
-{
-    DEBUG("[cc110x] switching to powerdown\n");
-    cc110x_wakeup_from_rx();
-    cc110x_strobe(CC1100_SPWD);
-    radio_state = RADIO_PWD;
-}
-
-/ *---------------------------------------------------------------------------* /
-int16_t cc110x_set_channel(uint8_t channr)
-{
-    if (channr > MAX_CHANNR) {
-        return -1;
-    }
-
-    write_register(CC1100_CHANNR, channr * 10);
-    radio_channel = channr;
-    return radio_channel;
-}
-
-#ifdef MODULE_CONFIG
-int16_t cc110x_set_config_channel(uint8_t channr)
-{
-    int16_t c = cc110x_set_channel(channr);
-
-    if (c) {
-        sysconfig.radio_channel = c;
-    }
-
-    config_save();
-    return c;
-}
-#endif
-
-int16_t cc110x_get_channel(void)
-{
-    return radio_channel;
-}
-
-
-/ *---------------------------------------------------------------------------
- *                          CC1100 reset functionality
- *---------------------------------------------------------------------------* /
-
-static void reset(void)
-{
-    cc110x_wakeup_from_rx();
-    cc110x_cs();
-    cc110x_strobe(CC1100_SRES);
-    hwtimer_wait(RTIMER_TICKS(100));
-}
-
-static void power_up_reset(void)
-{
-    gpio_set(CC110X_CS);
-    gpio_clear(CC110X_CS);
-    gpio_set(CC110X_CS);
-    hwtimer_wait(RESET_WAIT_TIME);
-    reset();
-    radio_state = RADIO_IDLE;
-}
-
-static void write_register(uint8_t r, uint8_t value)
-{
-    / * Save old radio state * /
-    uint8_t old_state = radio_state;
-
-    / * Wake up from RX (no effect if in other mode) * /
-    cc110x_wakeup_from_rx();
-    cc110x_write_reg(r, value);
-
-    / * Have to put radio back to RX if old radio state
-     * was RX, otherwise no action is necessary * /
-    if (old_state == RADIO_RX) {
-        cc110x_switch_to_rx();
-    }
-}
-
-static int rd_set_mode(int mode)
-{
-    int result;
-
-    / * Get current radio mode * /
-    if ((radio_state == RADIO_UNKNOWN) || (radio_state == RADIO_PWD)) {
-        result = RADIO_MODE_OFF;
-    }
-    else {
-        result = RADIO_MODE_ON;
-    }
-
-    switch(mode) {
-        case RADIO_MODE_ON:
-            DEBUG("Enabling rx mode\n");
-            gpio_irq_enable(CC110X_GDO2);
-            cc110x_setup_rx_mode();                 / * Set chip to desired mode * /
-            break;
-
-        case RADIO_MODE_OFF:
-            gpio_irq_disable(CC110X_GDO2);          / * Disable interrupts * /
-            cc110x_switch_to_pwd();                 / * Set chip to power down mode * /
-            break;
-
-        case RADIO_MODE_GET:
-            / * do nothing, just return current mode * /
-        default:
-            / * do nothing * /
-            break;
-    }
-
-    / * Return previous mode * /
-    return result;
-}
-
-*/

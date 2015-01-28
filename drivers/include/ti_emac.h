@@ -10,15 +10,18 @@
 #include "driverlib/emac.h"
 #include "driverlib/hw_emac.h"
 
-#define RX_BUF_SIZE (10)
+#define TI_EMAC_NUM_RX_DESCRIPTORS 4
+#define TI_EMAC_NUM_TX_DESCRIPTORS 8
+#define TI_EMAC_NUM_RX_BUFFERS 10
+#define TI_EMAC_NUM_TX_BUFFERS 10
+#define TI_EMAC_BUFFER_SIZE 512
+#define TI_EMAC_PHY_PHYS_ADDR 0
 #define TI_EMAC_MAX_DATA_LENGTH 1500
+
+#define RX_BUF_SIZE (10)
 #define TRANSCEIVER_BUFFER_SIZE 10
 
-#ifndef EMAC_PHY_CONFIG
-#define EMAC_PHY_CONFIG         (EMAC_PHY_TYPE_INTERNAL |                     \
-                                 EMAC_PHY_INT_MDIX_EN |                       \
-                                 EMAC_PHY_AN_100B_T_FULL_DUPLEX)
-#endif
+#define TI_EMAC_PHY_CONFIG (EMAC_PHY_TYPE_INTERNAL | EMAC_PHY_INT_MDIX_EN | EMAC_PHY_AN_100B_T_FULL_DUPLEX)
 
 struct rx_buffer_s {
     radio_packet_t packet;
