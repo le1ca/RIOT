@@ -5,7 +5,22 @@
 #include "cpu.h"
 #include "netdev/base.h"
 #include "driverlib/rom.h"
+#include "driverlib/gpio.h"
 #include "driverlib/sysctl.h"
+
+#ifndef PART_TM4C1294NCPDT
+#define PART_TM4C1294NCPDT
+#endif
+
+#include "driverlib/pin_map.h"
+
+/* PHY LED config */
+#define LINK_LED      GPIO_PF0_EN0LED0
+#define LINK_LED_BASE GPIOF_AHB_BASE
+#define LINK_LED_PIN  GPIO_PIN_0
+#define ACT_LED       GPIO_PF4_EN0LED1
+#define ACT_LED_BASE  GPIOF_AHB_BASE
+#define ACT_LED_PIN   GPIO_PIN_4
 
 /* DMA descriptor management structure */
 typedef struct {
@@ -280,6 +295,12 @@ int ti_emac_initialize(netdev_t *dev){
 	
 	// wait for peripherals to be ready
 	while(!ROM_SysCtlPeripheralReady(SYSCTL_PERIPH_EMAC0));
+	
+	// configure LEDs
+	ROM_GPIOPinConfigure(LINK_LED);
+	GPIOPinTypeEthernetLED(LINK_LED_BASE, LINK_LED_PIN);
+	ROM_GPIOPinConfigure(ACT_LED);
+	GPIOPinTypeEthernetLED(ACT_LED_BASE, ACT_LED_PIN);
     
     // configure internal emac
     ROM_EMACPHYConfigSet(EMAC0_BASE, TI_EMAC_PHY_CONFIG);
