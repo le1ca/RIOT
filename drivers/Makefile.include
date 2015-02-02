@@ -30,4 +30,5 @@ ifneq (,$(filter nrf24l01p,$(USEMODULE)))
 endif
 ifneq (,$(filter ti_emac,$(USEMODULE)))
     USEMODULE_INCLUDES += $(RIOTBASE)/drivers/ti_emac/include
+    USEMODULE_INCLUDES += $(RIOTBASE)/sys/net/include
 endif

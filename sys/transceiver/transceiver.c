@@ -85,11 +85,14 @@ registered_t reg[TRANSCEIVER_MAX_REGISTERED];
 /* packet buffers */
 #if MODULE_AT86RF231 || MODULE_CC2420 || MODULE_MC1322X
 ieee802154_packet_t transceiver_buffer[TRANSCEIVER_BUFFER_SIZE];
+#elif MODULE_TI_EMAC
+ethernet_frame transceiver_buffer[TRANSCEIVER_BUFFER_SIZE];
 #else
 radio_packet_t transceiver_buffer[TRANSCEIVER_BUFFER_SIZE];
 #endif
+#ifndef MODULE_TI_EMAC
 uint8_t data_buffer[TRANSCEIVER_BUFFER_SIZE * PAYLOAD_SIZE];
-
+#endif
 /* message buffer */
 msg_t msg_buffer[TRANSCEIVER_MSG_BUFFER_SIZE];
 
@@ -135,7 +138,7 @@ void receive_mc1322x_packet(ieee802154_packet_t *trans_p);
 void receive_at86rf231_packet(ieee802154_packet_t *trans_p);
 #endif
 #ifdef MODULE_TI_EMAC
-void receive_ti_emac_packet(radio_packet_t *trans_p);
+void receive_ti_emac_packet(ethernet_frame *trans_p);
 #endif
 static int8_t send_packet(transceiver_type_t t, void *pkt);
 static int32_t get_channel(transceiver_type_t t);
@@ -171,7 +174,9 @@ void transceiver_init(transceiver_type_t t)
 
     /* Initializing transceiver buffer and data buffer */
     memset(transceiver_buffer, 0, sizeof(transceiver_buffer));
+    #ifndef MODULE_TI_EMAC
     memset(data_buffer, 0, TRANSCEIVER_BUFFER_SIZE * PAYLOAD_SIZE);
+    #endif
 #ifdef DBG_IGNORE
     memset(transceiver_ignored_addr, 0, sizeof(transceiver_ignored_addr));
 #endif
@@ -497,7 +502,7 @@ static void receive_packet(uint16_t type, uint8_t pos)
         }
         else if (type == RCV_PKT_TI_EMAC){
 #ifdef MODULE_TI_EMAC
-			radio_packet_t *trans_p = &(transceiver_buffer[transceiver_buffer_pos]);
+			ethernet_frame *trans_p = &(transceiver_buffer[transceiver_buffer_pos]);
 			receive_ti_emac_packet(trans_p);
 #endif
         }
@@ -692,21 +697,21 @@ void receive_nativenet_packet(radio_packet_t *trans_p)
 #endif
 
 #ifdef MODULE_TI_EMAC
-void receive_ti_emac_packet(radio_packet_t *trans_p)
+void receive_ti_emac_packet(ethernet_frame *trans_p)
 {
     unsigned state;
-    radio_packet_t *p = &_ti_emac_rx_buffer[rx_buffer_pos].packet;
+    ethernet_frame *p = &_ti_emac_rx_buffer[rx_buffer_pos];
+    uint16_t packet_len = sizeof(ethernet_frame) - TI_EMAC_MAX_DATA_LENGTH + p->plen;
 
     /* disable interrupts while copying packet */
     state = disableIRQ();
 
-    DEBUG("Handling ti_emac packet\n");
+    
+    //ti_emac_print_pkt_debug(p);
 
-    memcpy(trans_p, p, sizeof(radio_packet_t));
-    memcpy(&(data_buffer[transceiver_buffer_pos * PAYLOAD_SIZE]), p->data, p->length);
-    trans_p->data = (uint8_t *) &(data_buffer[transceiver_buffer_pos * PAYLOAD_SIZE]);
-
-    DEBUG("Packet %p was from %" PRIu16 " to %" PRIu16 ", size: %" PRIu8 "\n", trans_p, trans_p->src, trans_p->dst, trans_p->length);
+	memcpy(trans_p, p, packet_len);
+	
+	//printf("[transceiver] copied %d bytes to 0x%08x\n", packet_len, (uint32_t) trans_p);
 
     /* reset interrupts */
     restoreIRQ(state);
@@ -781,6 +786,8 @@ static int8_t send_packet(transceiver_type_t t, void *pkt)
 
     printf("\n");
 #endif
+#elif MODULE_TI_EMAC
+	ethernet_frame *p = (ethernet_frame *) p;
 #else
     radio_packet_t *p = (radio_packet_t *)pkt;
     DEBUG("transceiver: Send packet to %" PRIu16 "\n", p->dst);
@@ -794,6 +801,7 @@ static int8_t send_packet(transceiver_type_t t, void *pkt)
 #if (defined(MODULE_CC110X) || defined(MODULE_CC110X_LEGACY))
     cc110x_packet_t cc110x_pkt;
 #endif
+
 #ifdef MODULE_MC1322X
     maca_packet_t *maca_pkt = maca_get_free_packet();
 #endif

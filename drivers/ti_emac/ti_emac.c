@@ -1,5 +1,7 @@
+#include <string.h>
 #include "ti_emac.h"
 #include "transceiver.h"
+#include "ti_emac-interface.h"
 #include "hwtimer.h"
 #include "config.h"
 #include "cpu.h"
@@ -8,64 +10,9 @@
 #include "driverlib/gpio.h"
 #include "driverlib/sysctl.h"
 
-#ifndef PART_TM4C1294NCPDT
-#define PART_TM4C1294NCPDT
-#endif
-
-#include "driverlib/pin_map.h"
-
-/* PHY LED config */
-#define LINK_LED      GPIO_PF0_EN0LED0
-#define LINK_LED_BASE GPIOF_AHB_BASE
-#define LINK_LED_PIN  GPIO_PIN_0
-#define ACT_LED       GPIO_PF4_EN0LED1
-#define ACT_LED_BASE  GPIOF_AHB_BASE
-#define ACT_LED_PIN   GPIO_PIN_4
-
-/* DMA descriptor management structure */
-typedef struct {
-  tEMACDMADescriptor Desc;
-  struct tpbuffer *pBuf;
-} tDescriptor;
-
-/* DMA descriptor list */
-typedef struct {
-    tDescriptor *pDescriptors;
-    uint32_t ui32NumDescs;
-    uint32_t ui32Read;
-    uint32_t ui32Write;
-} tDescriptorList;
-
-/* Packet buffer structure */
-typedef struct tpbuffer {
-	uint16_t len;
-	uint8_t  p[TI_EMAC_BUFFER_SIZE];
-	uint8_t  free;
-	struct tpbuffer *next;
-	uint16_t tot_len;
-} tpbuffer;
-
-/* Ethernet header structure */
-struct eth_hdr {
-  uint8_t  dest[6];
-  uint8_t  src[6];
-  uint16_t type;
-};
-
-
-/* Buffer management functions */
-tpbuffer *ti_emac_alloc_buf(tpbuffer *pool);
-void ti_emac_free_buf(tpbuffer *buf);
-void ti_emac_buf_cat(tpbuffer *a, tpbuffer *b);
-void ti_emac_init_bufs(void);
-
-/* ISR helpers */
-void process_phy_interrupt(void);
-void process_tx_interrupt(void);
-void process_rx_interrupt(void);
-
 /* Rx buffer */
-struct rx_buffer_s _ti_emac_rx_buffer[RX_BUF_SIZE];
+ethernet_frame _ti_emac_rx_buffer[RX_BUF_SIZE];
+static volatile uint8_t rx_buffer_next;
 
 /* DMA descriptors */
 tDescriptor g_pTxDescriptors[TI_EMAC_NUM_TX_DESCRIPTORS];
@@ -82,6 +29,48 @@ tDescriptorList g_RxDescList = {
 /* Packet buffers */
 tpbuffer rxbuffers[TI_EMAC_NUM_RX_BUFFERS];
 tpbuffer txbuffers[TI_EMAC_NUM_TX_BUFFERS];
+
+void ti_emac_print_pkt_debug(ethernet_frame *p){
+	uint16_t i;
+	
+	printf("Got ethernet frame:\n");
+	if(p->hdr.type <= 1500){
+		printf("\tLen:\t%u\n", p->hdr.type);
+	}
+	else{
+		printf("\tType:\t0x%04x\n", p->hdr.type);
+	}
+           
+	printf("\tSrc:\t%02x:%02x:%02x:%02x:%02x:%02x\n",
+		p->hdr.src[0],
+		p->hdr.src[1],
+		p->hdr.src[2],
+		p->hdr.src[3],
+		p->hdr.src[4],
+		p->hdr.src[5]
+	);
+	printf("\tDst:\t%02x:%02x:%02x:%02x:%02x:%02x\n",
+		p->hdr.dest[0],
+		p->hdr.dest[1],
+		p->hdr.dest[2],
+		p->hdr.dest[3],
+		p->hdr.dest[4],
+		p->hdr.dest[5]
+	);
+
+	printf("Payload Length:%u\n", p->plen);
+	printf("Payload: \n");
+
+	for (i = 0; i < p->plen; i++) {
+		printf("%02X ", p->data[i]);
+		if((i+1) % 16 == 0)
+			printf("\n");
+	}
+	
+	if((i+1) % 16 != 0)
+		printf("\n");
+	printf("\n");
+}
 
 /* Initialize buffers (mark all as free) */
 inline void ti_emac_init_bufs(void){
@@ -119,6 +108,9 @@ tpbuffer *ti_emac_alloc_buf(tpbuffer pool[]){
 
 /* Restore the free flag of a buffer */
 void ti_emac_free_buf(tpbuffer *buf){
+	if(buf->next)
+		ti_emac_free_buf(buf->next);
+
 	buf->len = TI_EMAC_BUFFER_SIZE;
 	buf->tot_len = TI_EMAC_BUFFER_SIZE;
 	buf->next = 0;
@@ -135,81 +127,72 @@ void ti_emac_buf_cat(tpbuffer *h, tpbuffer *t){
   	p->next = t;
 }
 
-/* Print the headers of an ethernet packet (debugging) */
-inline void print_pkt(tpbuffer *p){
-  struct eth_hdr *ethhdr = (struct eth_hdr *)p->p;
-  
-  ethhdr->type = ntohs(ethhdr->type);
-  
-  printf("buf len: %d\n", p->len);
-  
-  if(ethhdr->type <= 1500){
-  	printf("Packet length: %d bytes\n", ethhdr->type);
-  }
-  else if(ethhdr->type >= 1536 ){
-  	printf("Packet Type: 0x%04x", ethhdr->type);
-  	switch(ethhdr->type){
-  		case 0x0800:
-  			printf(" (IPv4)");
-  			break;
-  		case 0x0806:
-  			printf(" (ARP)");
-  			break;
-  		case 0x0842:
-  			printf(" (Wake-on-LAN)");
-  			break;
-  		case 0x86DD:
-  			printf(" (IPV6)");
-  			break;
-  		case 0x8808:
-  			printf(" (Flow control)");
-  			break;
-  		case 0x8847:
-  		case 0x8848:
-  			printf(" (MPLS)");
-  			break;
-  		case 0x888e:
-  			printf(" (802.1x)");
-  			break;
-  		case 0x88cc:
-  			printf(" (LLDP)");
-  			break;
-  		default:
-  			printf(" (unknown)");
-  	}
-  	printf("\n");
-  }
-  else{
-  	printf("Invalid EtherType: 0x%04x\n", ethhdr->type);
-  }
+/* Pass a packet up to the transceiver thread */
+inline void handle_packet(tpbuffer *p){
+	struct eth_hdr *ethhdr = (struct eth_hdr *)p->p;
+	ethhdr->type = ntohs(ethhdr->type);
 
-  printf("Destination: %02x:%02x:%02x:%02x:%02x:%02x\n",
-    ethhdr->dest[0],
-    ethhdr->dest[1],
-    ethhdr->dest[2],
-    ethhdr->dest[3],
-    ethhdr->dest[4],
-    ethhdr->dest[5]
-  );
-  printf("Source:      %02x:%02x:%02x:%02x:%02x:%02x\n",
-    ethhdr->src[0],
-    ethhdr->src[1],
-    ethhdr->src[2],
-    ethhdr->src[3],
-    ethhdr->src[4],
-    ethhdr->src[5]
-  );
-  
-  if(p->next){
-  	printf("chained: \n");
-  	print_pkt(p->next);
-  }
-  
+	/* copy header */
+    memcpy(&_ti_emac_rx_buffer[rx_buffer_next].hdr, ethhdr, sizeof(struct eth_hdr));
+    
+    /* copy data */
+    uint16_t bsf = 0;	// bytes read so far (position in destination buffer)
+    tpbuffer *q = p;    // pointer to current chunk of frame
+    
+    while(q){
+    	uint16_t foffset = 0, eoffset = 0;
+    	
+    	// if this is the first chunk of the frame, skip past the header
+    	if(bsf == 0)
+    		foffset = sizeof(struct eth_hdr);
+    		
+    	// if this is the last chunk of the frame, skip the crc
+    	if(!q->next)
+    		eoffset = 4;
+    		
+    	if(foffset > q->len){
+    		printf("[emac] frame chunk smaller than header (len %d vs. %d)\n", q->len, foffset);
+    	}
+    		
+		// pointer to start of payload
+		uint8_t *payload = (uint8_t *) (q->p + foffset);
+    	uint16_t len = q->len - (foffset + eoffset);
+    	
+    	if(bsf + len > 1500){
+    		printf("[emac] got oversized frame (at least %d bytes)\n", bsf + len);
+    		break;
+    	}
+    		
+	    memcpy(&_ti_emac_rx_buffer[rx_buffer_next].data[bsf], payload, len);
+	    
+	    bsf += len;
+	    q = q->next;
+	}
+    
+    _ti_emac_rx_buffer[rx_buffer_next].plen = bsf;
+    _ti_emac_rx_buffer[rx_buffer_next].processing = 1;
+
+	/* send frame to transceiver thread */
+    if (transceiver_pid != KERNEL_PID_UNDEF) {
+        msg_t m;
+        m.type = (uint16_t) RCV_PKT_TI_EMAC;
+        m.content.value = rx_buffer_next;
+        msg_send_int(&m, transceiver_pid);
+        //notified = 1;
+    }
+    
+    //ti_emac_print_pkt_debug(&_ti_emac_rx_buffer[rx_buffer_next]);
+    
+    if (++rx_buffer_next == RX_BUF_SIZE) {
+        rx_buffer_next = 0;
+    }
 }
 
 #ifdef MODULE_TRANSCEIVER
+/* Primary init entry point (when transceiver module is present)*/
 void ti_emac_init(kernel_pid_t tpid){
     transceiver_pid = tpid;
+    rx_buffer_next = 0;
     ti_emac_initialize(NULL);
 }
 #endif
@@ -257,8 +240,8 @@ inline void ti_emac_dma_init(void){
               &g_pRxDescriptors[0].Desc : &g_pRxDescriptors[ui32Loop + 1].Desc);
   }
 
-  g_TxDescList.ui32Read = 0;
-  g_TxDescList.ui32Write = 0;
+  //g_RxDescList.ui32Read = 0;
+  //g_RxDescList.ui32Write = 0;
 
   //
   // Set the descriptor pointers in the hardware.
@@ -375,7 +358,7 @@ int ti_emac_initialize(netdev_t *dev){
 }
 
 /* TODO: place packet in tx buffers */
-int ti_emac_send(radio_packet_t *p){
+int ti_emac_send(ethernet_frame *p){
 	return 1;
 }
 
@@ -417,6 +400,8 @@ void ti_emac_switch_to_rx(void){
 /* Main ISR for emac interrupt */
 void isr_emac0(void){
 
+	uint32_t state = disableIRQ();
+
 	uint32_t status = ROM_EMACIntStatus(EMAC0_BASE, true);
 	if(status){
 		ROM_EMACIntClear(EMAC0_BASE, status);
@@ -442,6 +427,8 @@ void isr_emac0(void){
 	if(status & (EMAC_INT_RECEIVE | EMAC_INT_RX_NO_BUFFER | EMAC_INT_RX_STOPPED)){
         process_rx_interrupt();
 	}
+	
+	restoreIRQ(state);	
 }
 
 /* PHY interrupt: renegotiate link parameters */
@@ -566,7 +553,6 @@ inline void process_rx_interrupt(void){
   /* Step through the descriptors that are marked for CPU attention. */
   while(pDescList->ui32Read != ui32DescEnd){
   
-  
       /* Does the current descriptor have a buffer attached to it? */
       if(pDescList->pDescriptors[pDescList->ui32Read].pBuf){
       
@@ -587,12 +573,13 @@ inline void process_rx_interrupt(void){
                * directly here (rather than calling pbuf_realloc) since we
                * know each of these pbufs is never chained.
                */
+              //printf("[emac] rx last_desc len %d\n",  pDescList->pDescriptors[pDescList->ui32Read].pBuf->len);
               pDescList->pDescriptors[pDescList->ui32Read].pBuf->len =
                        (pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32CtrlStatus &
                         DES0_RX_STAT_FRAME_LENGTH_M) >>
                         DES0_RX_STAT_FRAME_LENGTH_S;
-              //pDescList->pDescriptors[pDescList->ui32Read].pBuf->tot_len =
-              //          pDescList->pDescriptors[pDescList->ui32Read].pBuf->len;
+              pDescList->pDescriptors[pDescList->ui32Read].pBuf->tot_len =
+                        pDescList->pDescriptors[pDescList->ui32Read].pBuf->len;
           }
 
           if(pBuf){
@@ -602,6 +589,11 @@ inline void process_rx_interrupt(void){
                * pbuf_chain() since we don't want to increase the reference
                * count of either pbuf - we only want to link them together.
                */
+               // TODO: fix this because it's totally screwed
+               // then we can make the buffers smaller, too
+               //printf("[emac] linking buffer %x (len %d) to %x (len %d)\n", pBuf, pBuf->len,
+               //	pDescList->pDescriptors[pDescList->ui32Read].pBuf, pDescList->pDescriptors[pDescList->ui32Read].pBuf->len
+               //);
               ti_emac_buf_cat(pBuf, pDescList->pDescriptors[pDescList->ui32Read].pBuf);
               pDescList->pDescriptors[pDescList->ui32Read].pBuf = pBuf;
           }
@@ -627,18 +619,16 @@ inline void process_rx_interrupt(void){
                   /* This is a good frame so pass it up the stack. */
                   //LINK_STATS_INC(link.recv);
                   //DRIVER_STATS_INC(RXPacketReadCount);
-                  puts("[emac] rx good frame");
-                  // TODO: pass frame up to kernel
-                  print_pkt(pBuf);
+                  handle_packet(pBuf);
                   ti_emac_free_buf(pBuf);
 
-				/*
-                  / * Place the timestamp in the PBUF if PTPD is enabled * /
-                  pBuf->time_s =
-                       pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32IEEE1588TimeHi;
-                  pBuf->time_ns =
-                       pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32IEEE1588TimeLo;
-				*/
+				
+                  /* Place the timestamp in the PBUF if PTPD is enabled */
+                  //pBuf->time_s =
+                  //     pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32IEEE1588TimeHi;
+                  //pBuf->time_ns =
+                  //     pDescList->pDescriptors[pDescList->ui32Read].Desc.ui32IEEE1588TimeLo;
+				
 
                   //if(ethernet_input(pBuf, psNetif) != ERR_OK){
 
