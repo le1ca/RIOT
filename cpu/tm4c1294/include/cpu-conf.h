@@ -35,10 +35,10 @@ extern uint32_t ti_clock_hz;
 #define KERNEL_CONF_STACKSIZE_PRINTF        (2048)
 
 #ifndef KERNEL_CONF_STACKSIZE_DEFAULT
-#define KERNEL_CONF_STACKSIZE_DEFAULT   (256)
+#define KERNEL_CONF_STACKSIZE_DEFAULT   (8*256)
 #endif
 
-#define KERNEL_CONF_STACKSIZE_IDLE      (256)
+#define KERNEL_CONF_STACKSIZE_IDLE      (8*256)
 /** @} */
 
 /**
