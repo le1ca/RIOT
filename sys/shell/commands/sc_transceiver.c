@@ -236,6 +236,8 @@ void _transceiver_send_handler(int argc, char **argv)
 #if MODULE_AT86RF231 || MODULE_CC2420 || MODULE_MC1322X
     ieee802154_packet_t p;
     uint16_t short_addr;
+#elif MODULE_TI_EMAC
+	ethernet_frame p;
 #else
     radio_packet_t p;
 #endif
@@ -264,6 +266,12 @@ void _transceiver_send_handler(int argc, char **argv)
     else {
         p.frame.dest_pan_id = IEEE_802154_DEFAULT_PAN_ID;
     }
+#elif MODULE_TI_EMAC
+	uint8_t eth_broadcast[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+	memcpy(p.data, text_msg, strlen(text_msg) + 1);
+	p.plen = (strlen(text_msg) + 1);
+	memcpy(p.hdr.dest, eth_broadcast, 6);
+	p.hdr.type = 0xffff;
 #else
     p.data = (uint8_t *) text_msg;
     p.length = strlen(text_msg) + 1;
@@ -276,6 +284,8 @@ void _transceiver_send_handler(int argc, char **argv)
 
 #if MODULE_AT86RF231 || MODULE_CC2420 || MODULE_MC1322X
     printf("[transceiver] Sending packet of length %" PRIu16 " to %" PRIu16 ": %s\n", p.frame.payload_len, p.frame.dest_addr[1], (char*) p.frame.payload);
+#elif MODULE_TI_EMAC
+	printf("[transceiver] Sending packet of length %" PRIu16 " to %x:%x:%x:%x:%x:%x: %s\n", p.plen, p.hdr.dest[0], p.hdr.dest[1], p.hdr.dest[2], p.hdr.dest[3], p.hdr.dest[4], p.hdr.dest[5], (char*) p.data);
 #else
     printf("[transceiver] Sending packet of length %" PRIu16 " to %" PRIu16 ": %s\n", p.length, p.dst, (char*) p.data);
 #endif
