@@ -787,7 +787,7 @@ static int8_t send_packet(transceiver_type_t t, void *pkt)
     printf("\n");
 #endif
 #elif MODULE_TI_EMAC
-	ethernet_frame *p = (ethernet_frame *) p;
+	ethernet_frame *p = (ethernet_frame *) pkt;
 #else
     radio_packet_t *p = (radio_packet_t *)pkt;
     DEBUG("transceiver: Send packet to %" PRIu16 "\n", p->dst);
