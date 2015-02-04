@@ -15,9 +15,9 @@
 #define TI_EMAC_NUM_TX_DESCRIPTORS 8
 #define TI_EMAC_NUM_RX_BUFFERS 4
 #define TI_EMAC_NUM_TX_BUFFERS 8
-#define TI_EMAC_BUFFER_SIZE 1518
+#define TI_EMAC_BUFFER_SIZE 1518		// size of full ethernet frame
 #define TI_EMAC_PHY_PHYS_ADDR 0
-#define TI_EMAC_MAX_DATA_LENGTH 1500
+#define TI_EMAC_MAX_DATA_LENGTH 1500	// size of ethernet payload
 
 #define RX_BUF_SIZE (10)
 #define TRANSCEIVER_BUFFER_SIZE 10

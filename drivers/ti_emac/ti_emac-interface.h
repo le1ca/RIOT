@@ -53,4 +53,7 @@ void process_rx_interrupt(void);
 /* Clean up a packet and pass it up to the transceiver thread */
 void handle_packet(tpbuffer* p);
 
+/* Send a packet out of the interface */
+uint32_t ti_emac_transmit(tpbuffer *p);
+
 #endif

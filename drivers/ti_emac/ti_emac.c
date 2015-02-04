@@ -10,6 +10,9 @@
 #include "driverlib/gpio.h"
 #include "driverlib/sysctl.h"
 
+/* our mac address */
+uint8_t  ti_emac_pmac[8];
+
 /* Rx buffer */
 ethernet_frame _ti_emac_rx_buffer[RX_BUF_SIZE];
 static volatile uint8_t rx_buffer_next;
@@ -30,6 +33,7 @@ tDescriptorList g_RxDescList = {
 tpbuffer rxbuffers[TI_EMAC_NUM_RX_BUFFERS];
 tpbuffer txbuffers[TI_EMAC_NUM_TX_BUFFERS];
 
+/* Prints headers and content of a packet */
 void ti_emac_print_pkt_debug(ethernet_frame *p){
 	uint16_t i;
 	
@@ -115,6 +119,7 @@ void ti_emac_free_buf(tpbuffer *buf){
 	buf->tot_len = TI_EMAC_BUFFER_SIZE;
 	buf->next = 0;
 	buf->free = 1;
+	
 }
 
 /* Chain two buffers together */
@@ -170,7 +175,7 @@ inline void handle_packet(tpbuffer *p){
 	}
     
     _ti_emac_rx_buffer[rx_buffer_next].plen = bsf;
-    _ti_emac_rx_buffer[rx_buffer_next].processing = 1;
+    _ti_emac_rx_buffer[rx_buffer_next].processing = 0;
 
 	/* send frame to transceiver thread */
     if (transceiver_pid != KERNEL_PID_UNDEF) {
@@ -253,7 +258,6 @@ inline void ti_emac_dma_init(void){
 /* Initialize the EMAC hardware */
 int ti_emac_initialize(netdev_t *dev){
 	uint32_t umac0, umac1;
-	uint8_t  pmac[8];
 	
 	// get mac and convert to byte array
 	ROM_FlashUserGet(&umac0, &umac1);
@@ -261,14 +265,14 @@ int ti_emac_initialize(netdev_t *dev){
         puts("[emac] no MAC configured in user registers - not enabling emac0");
         return -1;
     }
-	pmac[0] = ((umac0 >>  0) & 0xff);
-	pmac[1] = ((umac0 >>  8) & 0xff);
-	pmac[2] = ((umac0 >> 16) & 0xff);
-	pmac[3] = ((umac1 >>  0) & 0xff);
-	pmac[4] = ((umac1 >>  8) & 0xff);
-	pmac[5] = ((umac1 >> 16) & 0xff);
+	ti_emac_pmac[0] = ((umac0 >>  0) & 0xff);
+	ti_emac_pmac[1] = ((umac0 >>  8) & 0xff);
+	ti_emac_pmac[2] = ((umac0 >> 16) & 0xff);
+	ti_emac_pmac[3] = ((umac1 >>  0) & 0xff);
+	ti_emac_pmac[4] = ((umac1 >>  8) & 0xff);
+	ti_emac_pmac[5] = ((umac1 >> 16) & 0xff);
     	
-	printf("[emac] mac addr %02x:%02x:%02x:%02x:%02x:%02x\n", pmac[0], pmac[1], pmac[2], pmac[3], pmac[4], pmac[5]);
+	printf("[emac] mac addr %02x:%02x:%02x:%02x:%02x:%02x\n", ti_emac_pmac[0], ti_emac_pmac[1], ti_emac_pmac[2], ti_emac_pmac[3], ti_emac_pmac[4], ti_emac_pmac[5]);
     
     // enable peripherals
     ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_EMAC0);
@@ -301,7 +305,7 @@ int ti_emac_initialize(netdev_t *dev){
                        EMAC_MODE_TX_STORE_FORWARD |
                        EMAC_MODE_TX_THRESHOLD_64_BYTES |
                        EMAC_MODE_RX_THRESHOLD_64_BYTES), 0);
-	ROM_EMACAddrSet(EMAC0_BASE, 0, (uint8_t *) pmac);
+	ROM_EMACAddrSet(EMAC0_BASE, 0, (uint8_t *) ti_emac_pmac);
 
 	// set up DMA
 	ti_emac_dma_init();
@@ -359,6 +363,19 @@ int ti_emac_initialize(netdev_t *dev){
 
 /* TODO: place packet in tx buffers */
 int ti_emac_send(ethernet_frame *p){
+	tpbuffer *a = ti_emac_alloc_buf(txbuffers);
+	uint32_t r;
+	struct eth_hdr *aa = (struct eth_hdr *) a->p;
+	
+	
+	a->len     = p->plen + sizeof(struct eth_hdr);
+	a->tot_len = a->len;
+	memcpy(a->p+sizeof(struct eth_hdr), p->data, p->plen);
+	memcpy(aa, &p->hdr, sizeof(struct eth_hdr));
+	memcpy(aa->src, ti_emac_pmac, 6);
+	
+	ti_emac_print_pkt_debug(a);
+	r = ti_emac_transmit(a);
 	return 1;
 }
 
@@ -420,7 +437,6 @@ void isr_emac0(void){
 	}
 
 	if(status & EMAC_INT_TRANSMIT){
-		printf("[emac0] tx int\n");
         process_tx_interrupt();
 	}
 
@@ -511,14 +527,12 @@ inline void process_tx_interrupt(void){
         /* Does this descriptor have a buffer attached to it? */
         if(pDescList->pDescriptors[pDescList->ui32Read].pBuf) {
             /* Yes - free it if it's not marked as an intermediate pbuf */
-            //if(!((uint32_t)(pDescList->pDescriptors[pDescList->ui32Read].pBuf) & 1))
-            //{
-                //pbuf_free(pDescList->pDescriptors[pDescList->ui32Read].pBuf);
-                //pDescList->pDescriptors[pDescList->ui32Read].pBuf->free = 1;
+            if(!((uint32_t)(pDescList->pDescriptors[pDescList->ui32Read].pBuf) & 1))
+            {
+                ti_emac_free_buf(pDescList->pDescriptors[pDescList->ui32Read].pBuf);
+                pDescList->pDescriptors[pDescList->ui32Read].pBuf = NULL;
                 //DRIVER_STATS_INC(TXBufFreedCount);
-            //}
-            ti_emac_free_buf(pDescList->pDescriptors[pDescList->ui32Read].pBuf);
-            //pDescList->pDescriptors[pDescList->ui32Read].pBuf = NULL;
+            }
         }
         else{
             /* If the descriptor has no buffer, we are finished. */
@@ -689,4 +703,128 @@ inline void process_rx_interrupt(void){
           pDescList->ui32Read = 0;
       }
   }
+}
+
+/* Low-level transmit function */
+uint32_t ti_emac_transmit(tpbuffer *p){
+  tDescriptor *pDesc;
+  tpbuffer *pBuf;
+  uint32_t ui32NumChained;
+  bool bFirst;
+  uint32_t irq_state = disableIRQ();
+
+  //LWIP_DEBUGF(NETIF_DEBUG, ("tivaif_transmit 0x%08x, len %d\n", p,
+  //            p->tot_len));
+  /* Update our transmit attempt counter. */
+
+  /* Make sure that the transmit descriptors are not all in use */
+  pDesc = &(g_TxDescList.pDescriptors[g_TxDescList.ui32Write]);
+  if(pDesc->pBuf){
+      /**
+       * The current write descriptor has a pbuf attached to it so this
+       * implies that the ring is fui32l. Reject this transmit request with a
+       * memory error since we can't satisfy it just now.
+       */
+      printf("[emac] tx failed - no available buffers\n");
+      ti_emac_free_buf(p);
+      restoreIRQ(irq_state);
+      return 1;
+  }
+
+  /* How many pbufs are in the chain passed? */
+  // TODO: fix chaining. right now we are just making our buffers big enough for the whole frame
+  //ui32NumChained = (uint32_t)pbuf_clen(p);
+  ui32NumChained = 1;
+
+  /* How many free transmit descriptors do we have? */
+  //ui32NumDescs = (pIF->pTxDescList->ui32Read > pIF->pTxDescList->ui32Write) ?
+  //        (pIF->pTxDescList->ui32Read - pIF->pTxDescList->ui32Write) :
+  //        ((NUM_TX_DESCRIPTORS - pIF->pTxDescList->ui32Write) +
+  //         pIF->pTxDescList->ui32Read);
+
+  /* Do we have enough free descriptors to send the whole packet? */
+  //if(ui32NumDescs < ui32NumChained)
+  //{
+      /* No - we can't transmit this whole packet so return an error. */
+  //    pbuf_free(p);
+  //    LINK_STATS_INC(link.memerr);
+  //    DRIVER_STATS_INC(TXNoDescCount);
+  //    SYS_ARCH_UNPROTECT(lev);
+  //    return (ERR_MEM);
+  //}
+
+  /* Tag the first descriptor as the start of the packet. */
+  bFirst = true;
+  pDesc->Desc.ui32CtrlStatus = DES0_TX_CTRL_FIRST_SEG;
+
+  /* Here, we know we can send the packet so write it to the descriptors */
+  pBuf = p;
+
+  while(ui32NumChained)
+  {
+  
+      /* Get a pointer to the descriptor we will write next. */
+      pDesc = &(g_TxDescList.pDescriptors[g_TxDescList.ui32Write]);
+
+      /* Fill in the buffer pointer and length */
+      pDesc->Desc.ui32Count = (uint32_t)pBuf->len;
+      pDesc->Desc.pvBuffer1 = pBuf->p;
+
+      /* Tag the first descriptor as the start of the packet. */
+      if(bFirst)
+      {
+          bFirst = false;
+          pDesc->Desc.ui32CtrlStatus = DES0_TX_CTRL_FIRST_SEG;
+      }
+      else
+      {
+          pDesc->Desc.ui32CtrlStatus = 0;
+      }
+
+      pDesc->Desc.ui32CtrlStatus |= (DES0_TX_CTRL_IP_ALL_CKHSUMS |
+                                     DES0_TX_CTRL_CHAINED);
+
+      /* Decrement our descriptor counter, move on to the next buffer in the
+       * pbuf chain. */
+      ui32NumChained--;
+      pBuf = pBuf->next;
+
+      /* Update the descriptor list write index. */
+      g_TxDescList.ui32Write++;
+      if(g_TxDescList.ui32Write == TI_EMAC_NUM_TX_DESCRIPTORS)
+      {
+          g_TxDescList.ui32Write = 0;
+      }
+
+      /* If this is the last descriptor, mark it as the end of the packet. */
+      if(!ui32NumChained)
+      {
+          pDesc->Desc.ui32CtrlStatus |= (DES0_TX_CTRL_LAST_SEG |
+                                         DES0_TX_CTRL_INTERRUPT);
+		  
+          /* Tag the descriptor with the original pbuf pointer. */
+          pDesc->pBuf = p;
+      }
+      else
+      {
+          /* Set the lsb of the pbuf pointer.  We use this as a signal that
+           * we should not free the pbuf when we are walking the descriptor
+           * list while processing the transmit interrupt.  We only free the
+           * pbuf when processing the last descriptor used to transmit its
+           * chain.
+           */
+          //pDesc->pBuf = (tpbuffer *)((uint32_t)p + 1);
+          //printf("[emac] pbuf addr now %08lx\n", pDesc->pBuf);
+      }
+
+      /* Hand the descriptor over to the hardware. */
+      pDesc->Desc.ui32CtrlStatus |= DES0_TX_CTRL_OWN;
+  }
+
+  /* Tell the transmitter to start (in case it had stopped). */
+  ROM_EMACTxDMAPollDemand(EMAC0_BASE);
+
+  restoreIRQ(irq_state);
+
+  return 0;
 }
