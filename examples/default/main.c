@@ -49,7 +49,7 @@
 
 #define SND_BUFFER_SIZE     (100)
 #define RCV_BUFFER_SIZE     (64)
-#define RADIO_STACK_SIZE    (2* KERNEL_CONF_STACKSIZE_DEFAULT)
+#define RADIO_STACK_SIZE    (8* KERNEL_CONF_STACKSIZE_DEFAULT)
 
 #ifdef MODULE_TRANSCEIVER
 
@@ -108,46 +108,67 @@ void *radio(void *arg)
             
 #elif MODULE_TI_EMAC
 			p = (ethernet_frame *) m.content.ptr;
-			printf("[main] got pointer to ethernet frame at 0x%08x\n", (uint32_t) m.content.ptr);
 			
-			if(p->hdr.type <= 1500){
-				printf("\tLen:\t%u\n", p->hdr.type);
+			/* ipv4 */
+			if(p->hdr.type == 0x800){
+				uint32_t* ip_hdr  = (uint32_t *) p->data;		 			 // ip header as words
+				uint8_t   ip_hlen = (uint8_t)((ip_hdr[0] & 0x0f000000)>>24); // ip header len
+				uint8_t   ip_prot = (uint8_t)((ip_hdr[2] & 0x00ff0000)>>16); // ip protocol
+				uint8_t*  ip_sadd = (uint8_t*)&ip_hdr[3];					 // ip source
+				uint8_t*  ip_dadd = (uint8_t*)&ip_hdr[4];					 // ip dest
+				uint32_t* ip_pld  = &ip_hdr[ip_hlen];					     // ip payload
+				
+				printf("IPv4 packet\n");
+				printf("Srce: %d.%d.%d.%d\n", ip_sadd[0], ip_sadd[1], ip_sadd[2], ip_sadd[3]);
+				printf("Dest: %d.%d.%d.%d\n", ip_dadd[0], ip_dadd[1], ip_dadd[2], ip_dadd[3]);
+				printf("Prot: 0x%02x\n", ip_prot);
 			}
 			else{
-				printf("\tType:\t0x%04x\n", p->hdr.type);
+			
+				printf("Ethernet frame\n");
+			
+				if(p->hdr.type <= 1500){
+					printf("\tLen:\t%u\n", p->hdr.type);
+				}
+				else{
+					printf("\tType:\t0x%04x\n", p->hdr.type);
+				}
+            
+	            printf("\tSrc:\t%02x:%02x:%02x:%02x:%02x:%02x\n",
+	            	p->hdr.src[0],
+	            	p->hdr.src[1],
+	            	p->hdr.src[2],
+	            	p->hdr.src[3],
+	            	p->hdr.src[4],
+	            	p->hdr.src[5]
+	            );
+            
+	             printf("\tDst:\t%02x:%02x:%02x:%02x:%02x:%02x\n",
+	            	p->hdr.dest[0],
+	            	p->hdr.dest[1],
+	            	p->hdr.dest[2],
+	            	p->hdr.dest[3],
+	            	p->hdr.dest[4],
+	            	p->hdr.dest[5]
+	            );
+	            
+    	        printf("Payload Length:%u\n", p->plen);
+    	        
+    	        /*
+	            printf("Payload: \n");
+            
+    	        for (i = 0; i < p->plen; i++) {
+	                printf("%02X ", p->data[i]);
+	                if((i+1) % 16 == 0)
+	                	printf("\n");
+	            }
+	            if((i+1) % 16 != 0)
+	            	printf("\n");
+	            */
 			}
-            
-            printf("\tSrc:\t%02x:%02x:%02x:%02x:%02x:%02x\n",
-            	p->hdr.src[0],
-            	p->hdr.src[1],
-            	p->hdr.src[2],
-            	p->hdr.src[3],
-            	p->hdr.src[4],
-            	p->hdr.src[5]
-            );
-            
-             printf("\tDst:\t%02x:%02x:%02x:%02x:%02x:%02x\n",
-            	p->hdr.dest[0],
-            	p->hdr.dest[1],
-            	p->hdr.dest[2],
-            	p->hdr.dest[3],
-            	p->hdr.dest[4],
-            	p->hdr.dest[5]
-            );
-            
-            printf("Payload Length:%u\n", p->plen);
-            printf("Payload: \n");
-            
-            for (i = 0; i < p->plen; i++) {
-                printf("%02X ", p->data[i]);
-                if((i+1) % 16 == 0)
-                	printf("\n");
-            }
-            if((i+1) % 16 != 0)
-            	printf("\n");
-
-            p->processing--;
-            puts("\n");
+			
+    	    p->processing--;
+	        puts("\n");
             
 #else
             p = (radio_packet_t *) m.content.ptr;
