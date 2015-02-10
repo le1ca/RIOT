@@ -2,7 +2,7 @@
 #define __PERIPH_CONF_H
 
 #define UART_IRQ_PRIO       1
-#define UART_NUMOF          (3U)
+#define UART_NUMOF          (7U)
 
 #define UART_0_EN           1
 #define UART_0_ISR          isr_uart0
@@ -10,7 +10,7 @@
 #define UART_1_EN           0
 #define UART_1_ISR          isr_uart1
 
-#define UART_7_EN			0
+#define UART_7_EN			1
 #define UART_7_ISR			isr_uart7
 
 #define UART_0_IRQ_CHAN     UART0_IRQn
@@ -43,5 +43,7 @@
 #define TIMER_3_ISR         isr_tim3a
 #define TIMER_4_ISR         isr_tim4a
 #define TIMER_5_ISR         isr_tim5a
+
+#include "xbee-config.h"
 
 #endif /* __PERIPH_CONF_H */
