@@ -22,6 +22,10 @@ void board_init(void)
    	ROM_SysCtlPeripheralReset(SYSCTL_PERIPH_GPIOA);
     ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
 
+	ROM_SysCtlPeripheralDisable(SYSCTL_PERIPH_GPIOC);
+   	ROM_SysCtlPeripheralReset(SYSCTL_PERIPH_GPIOC);
+    ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOC);
+
     /* Enable the GPIO pins for the LED (PF1, PF2 & PF3) */
     ROM_GPIOPinTypeGPIOOutput(GPION_BASE, GPIO_PIN_0 | GPIO_PIN_1);
     ROM_GPIOPinTypeGPIOOutput(GPIOF_AHB_BASE, GPIO_PIN_0);
