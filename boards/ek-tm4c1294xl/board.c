@@ -30,4 +30,8 @@ void board_init(void)
     ROM_GPIOPinConfigure(GPIO_PA0_U0RX);
     ROM_GPIOPinConfigure(GPIO_PA1_U0TX);
     ROM_GPIOPinTypeUART(GPIOA_AHB_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+    
+    ROM_GPIOPinConfigure(GPIO_PC4_U7RX);
+    ROM_GPIOPinConfigure(GPIO_PC5_U7TX);
+    ROM_GPIOPinTypeUART(GPIOC_AHB_BASE, GPIO_PIN_4 | GPIO_PIN_5);
 }

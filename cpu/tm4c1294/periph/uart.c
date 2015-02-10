@@ -47,6 +47,10 @@ static inline int get_uart_base(uart_t uart) {
         case UART_1:
         return UART1_BASE;
 #endif
+#if UART_7_EN
+		case UART_7:
+		return UART7_BASE;
+#endif
         default:
         return -1;
     }
@@ -62,6 +66,10 @@ static inline int get_uart_num(uart_t uart) {
         case UART_1:
         return 1;
 #endif
+#if UART_7_EN
+		case UART_7:
+		return 7;
+#endif
         default:
         return -1;
     }
@@ -76,6 +84,10 @@ static inline int get_uart_irq(uart_t uart) {
 #if UART_1_EN
         case UART_1:
         return UART_1_IRQ_CHAN;
+#endif
+#if UART_7_EN
+		case UART_7:
+		return UART_7_IRQ_CHAN;
 #endif
         default:
         return -1;
@@ -118,7 +130,7 @@ int uart_init(uart_t uart, uint32_t baudrate, uart_rx_cb_t rx_cb, uart_tx_cb_t t
     uart_config[uart].arg = arg;
     
     /* no buffering */
-    ROM_UARTFIFODisable(UART0_BASE);
+    ROM_UARTFIFODisable(get_uart_base(uart));
 
     /* enable interrupt */
     NVIC_SetPriority(get_uart_irq(uart), UART_IRQ_PRIO);
@@ -199,6 +211,12 @@ void UART_0_ISR(void)
 void UART_1_ISR(void)
 {
     irq_handler(UART_1, (void*) get_uart_base(UART_1));
+}
+#endif
+
+#if UART_7_EN
+void UART_7_ISR(void){
+	irq_handler(UART_7, (void*) get_uart_base(UART_7));
 }
 #endif
 

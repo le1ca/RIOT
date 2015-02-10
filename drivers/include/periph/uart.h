@@ -51,6 +51,9 @@ typedef enum {
 #if UART_3_EN
     UART_3,                 /**< UART channel 3 */
 #endif
+#if UART_7_EN
+	UART_7,
+#endif
 } uart_t;
 
 /**
