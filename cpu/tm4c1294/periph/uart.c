@@ -47,6 +47,14 @@ static inline int get_uart_base(uart_t uart) {
         case UART_1:
         return UART1_BASE;
 #endif
+#if UART_2_EN
+		case UART_2:
+		return UART2_BASE;
+#endif
+#if UART_6_EN
+		case UART_6:
+		return UART6_BASE;
+#endif
 #if UART_7_EN
 		case UART_7:
 		return UART7_BASE;
@@ -66,6 +74,14 @@ static inline int get_uart_num(uart_t uart) {
         case UART_1:
         return 1;
 #endif
+#if UART_2_EN
+        case UART_2:
+        return 2;
+#endif
+#if UART_6_EN
+		case UART_6:
+		return 6;
+#endif
 #if UART_7_EN
 		case UART_7:
 		return 7;
@@ -84,6 +100,14 @@ static inline int get_uart_irq(uart_t uart) {
 #if UART_1_EN
         case UART_1:
         return UART_1_IRQ_CHAN;
+#endif
+#if UART_2_EN
+        case UART_2:
+        return UART_2_IRQ_CHAN;
+#endif
+#if UART_6_EN
+		case UART_6:
+		return UART_6_IRQ_CHAN;
 #endif
 #if UART_7_EN
 		case UART_7:
@@ -129,6 +153,8 @@ int uart_init(uart_t uart, uint32_t baudrate, uart_rx_cb_t rx_cb, uart_tx_cb_t t
     uart_config[uart].tx_cb = tx_cb;
     uart_config[uart].arg = arg;
     
+    //ROM_UARTDisable(get_uart_base(uart));
+    
     /* no buffering */
     ROM_UARTFIFODisable(get_uart_base(uart));
 
@@ -137,20 +163,28 @@ int uart_init(uart_t uart, uint32_t baudrate, uart_rx_cb_t rx_cb, uart_tx_cb_t t
     NVIC_EnableIRQ(get_uart_irq(uart));
     ROM_UARTIntEnable(get_uart_base(uart), UART_INT_RX);
 
+	//ROM_UARTEnable(get_uart_base(uart));
+
     return 0;
 }
 
 int uart_init_blocking(uart_t uart, uint32_t baudrate)
 {
-
 	/* enable uart peripheral pins */
+	ROM_SysCtlPeripheralDisable(SYSCTL_PERIPH_UART0 + get_uart_num(uart));
+	ROM_SysCtlPeripheralReset(SYSCTL_PERIPH_UART0 + get_uart_num(uart));
     ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0 + get_uart_num(uart));
+    
+    ROM_UARTDisable(get_uart_base(uart));
+
+   	ROM_UARTFlowControlSet(get_uart_base(uart), UART_FLOWCONTROL_TX | UART_FLOWCONTROL_RX);
+   	ROM_UARTModemControlSet(get_uart_base(uart), UART_OUTPUT_RTS);
 
 	/* connect uart to system clock */
     ROM_UARTClockSourceSet(get_uart_base(uart), UART_CLOCK_PIOSC);
 
 	/* set baud rate */
-    ROM_UARTConfigSetExpClk(get_uart_base(uart), 16000000, baudrate,
+    ROM_UARTConfigSetExpClk(get_uart_base(uart), 16000000L, baudrate,
                             (UART_CONFIG_PAR_NONE | UART_CONFIG_STOP_ONE |
                              UART_CONFIG_WLEN_8));
 
@@ -214,6 +248,19 @@ void UART_1_ISR(void)
 }
 #endif
 
+#if UART_2_EN
+void UART_2_ISR(void)
+{
+    irq_handler(UART_2, (void*) get_uart_base(UART_2));
+}
+#endif
+
+#if UART_6_EN
+void UART_6_ISR(void){
+	irq_handler(UART_6, (void*) get_uart_base(UART_6));
+}
+#endif
+
 #if UART_7_EN
 void UART_7_ISR(void){
 	irq_handler(UART_7, (void*) get_uart_base(UART_7));
@@ -241,8 +288,7 @@ static inline void irq_handler(uint8_t uartnum, void *dev)
 
 	// respond to rx interrupt
     if(ROM_UARTIntStatus(base, true) & UART_INT_RX){
-        char data = udev->DR;        
-        uart_config[uartnum].rx_cb(uart_config[uartnum].arg, data);
+        uart_config[uartnum].rx_cb(uart_config[uartnum].arg, udev->DR);
     }
 
     if (sched_context_switch_request) {
