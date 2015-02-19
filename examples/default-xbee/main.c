@@ -30,9 +30,12 @@
 #include "shell.h"
 #include "shell_commands.h"
 #include "board_uart0.h"
+#include "radio_driver.h"
 
 //#include "ieee802154_frame.h"
 #include "xbee.h"
+
+uint16_t mypan;
 
 static int shell_readc(void){
     char c = 0;
@@ -45,12 +48,30 @@ static void shell_putchar(int c){
 }
 
 void xbee_rx(void *buf, unsigned int len, int8_t rssi, uint8_t lqi, bool crc_ok){
+	static uint8_t seq = 0;
 	char* cb = (char*) buf;
-	printf("[xbee] got packet, rsi %d, crc %d, length is %d\n", rssi, crc_ok? 1 : 0, len);
+
+	// print incoming packet
+	printf("[xbee] got packet, rsi %d, lqi %d, crc %s, length is %d\n", rssi, lqi, crc_ok? "good" : "bad", len);
 	for(int i = 0; i < len; i++){
 		printf("%02x ", cb[i]);
 	}
 	printf("\n\n");
+	
+	// send ping reply
+	ieee802154_node_addr_t dest;
+	char rbuf[] = "\0\0RX\r";
+	rbuf[0] = ++seq;
+	dest.pan.id   = mypan;
+	dest.pan.addr = 0xffff;
+	
+	xbee_radio_driver.send(PACKET_KIND_DATA,
+						   dest,
+						   false,
+						   true,
+						   (void*) &rbuf,
+						   5
+	);
 }
 
 int main(void)
@@ -58,10 +79,12 @@ int main(void)
     shell_t shell;
     (void) posix_open(uart0_handler_pid, 0);
 
-	printf("[xbee] doing init\n");
 	xbee_radio_driver.init();
-	printf("[xbee] setting rx cb\n");
 	xbee_radio_driver.set_receive_callback(xbee_rx);
+	
+	mypan = xbee_radio_driver.get_pan_id();
+	printf("[xbee] pan id is 0x%04x\n", mypan);
+	printf("[xbee] channel is 0x%08x\n", xbee_radio_driver.get_channel());
 
     (void) puts("Welcome to RIOT!");
 
