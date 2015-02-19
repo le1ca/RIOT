@@ -26,6 +26,7 @@
 /* lower-level drivers needed to control the XBee module */
 #include "periph/uart.h"
 #include "periph/gpio.h"
+#include "driverlib/rom.h"
 
 /* hardware-dependent configuration */
 #include "xbee-config.h"
@@ -85,6 +86,8 @@ static receive_802154_packet_callback_t rx_callback;
 /* next ID for sent frames */
 static uint8_t frame_id;
 
+static struct mutex_t mutex_wait_for_ok;
+
 /* AT command response management data */
 static struct mutex_t mutex_wait_at_reponse;
 static xbee_at_cmd_response_t latest_at_response;
@@ -93,10 +96,18 @@ static xbee_at_cmd_response_t latest_at_response;
 static struct mutex_t mutex_wait_tx_status;
 static xbee_tx_status_report_t latest_tx_report;
 
+#ifndef core_panic
+#define core_panic(code, string) {\
+	printf("ERROR(0x%04x): %s\n", code, string); \
+	while(1); \
+}
+#endif
+
 
 /* send a character, via UART, to the XBee module */
 static void send_xbee(const uint8_t c)
 {
+	//printf("[xbee] sending byte: 0x%02x\n", c);
     int res = uart_write_blocking(XBEE_UART_LINK, c);
     if (res < 0) {
         core_panic(0x0bee,
@@ -200,7 +211,7 @@ static void xbee_send_API_command(uint8_t cmd_id,
     /* send the payload, while computing the checksum */
     send_xbee(cmd_id);
     uint8_t sum = cmd_id;
-    for (int i = 0; i < payload_len; i++) {
+    for (int i = 0; i < payload_len - 1; i++) {
         send_xbee(payload[i]);
         INC_CKSUM(payload[i]);
     }
@@ -220,12 +231,13 @@ static xbee_at_cmd_response_t xbee_send_AT_command(unsigned int len,
 {
     /* encode AT command into an API frame */
     static uint8_t buf[MAX_AT_CMD_LEN];
-    buf[0] = frame_id;
-    frame_id++;
+    buf[0] = frame_id++;
     for (int i = 0; i < len; i++) {
         buf[i + 1] = str[i];
     }
+    //printf("[xbee] sending command (frame id %d)\n", buf[0]);
     xbee_send_API_command(0x08, len + 1, buf);
+    //printf("[xbee] waiting\n");
     /* wait for response */
     mutex_lock(&mutex_wait_at_reponse);
     mutex_lock(&mutex_wait_at_reponse);
@@ -250,7 +262,16 @@ static xbee_at_cmd_response_t xbee_send_AT_command(unsigned int len,
 
 unsigned int xbee_rx_error_count = 0;
 
+#include "cpu-conf.h"
+#include "chardev_thread.h"
+#include "ringbuffer.h"
+#include "thread.h"
+#include "msg.h"
+#include "posix_io.h"
+#include "irq.h"
+
 #define XBEE_RECV_BUF_SIZE   128
+#define XBEE_STACKSIZE 		 1024
 
 /* We implement a finite state machine (FSM) to handle the incoming data,
    reconstruct the packets, extract their payload, and handle its
@@ -266,7 +287,55 @@ static enum {
                                      to arrive, but isn't complete yet */
     RECV_FSM_PACKET_COMPLETE,     /* we now have a complete packet,
                                      wait for checksum byte */
+	RECV_FSM_OK0,
+	RECV_FSM_OK1,
+	RECV_FSM_CR,
 } recv_fsm_state;
+
+/* need to store incoming data in a ringbuffer so the ISR doesn't take too long */
+ringbuffer_t xbee_ringbuffer;
+kernel_pid_t xbee_handler_pid = KERNEL_PID_UNDEF;
+static char xbee_uart_buffer[XBEE_RECV_BUF_SIZE];
+static char xbee_thread_stack[XBEE_STACKSIZE];
+
+void xbee_incoming_char(char c);
+
+void *xbee_thread_entry(void* arg){
+	ringbuffer_t *rb = (ringbuffer_t *) arg;
+	msg_t m;
+	while(1){
+        msg_receive(&m);
+      	while (rb->avail) {
+      		char c = 0;
+            unsigned state = disableIRQ();
+            ringbuffer_get(rb, &c, 1);
+            restoreIRQ(state);
+			xbee_incoming_char(c);
+        }  
+    }
+}
+
+void xbee_thread_init(void){
+    ringbuffer_init(&xbee_ringbuffer, xbee_uart_buffer, XBEE_RECV_BUF_SIZE);
+    kernel_pid_t pid = thread_create(
+                  xbee_thread_stack,
+                  sizeof(xbee_thread_stack),
+                  PRIORITY_MAIN - 1,
+                  CREATE_STACKTEST | CREATE_SLEEPING,
+                  xbee_thread_entry,
+                  &xbee_ringbuffer,
+                  "xbee0"
+              );
+    xbee_handler_pid = pid;
+    thread_wakeup(pid);
+}
+
+void xbee_handle_incoming(void* arg, char c){
+    msg_t m;
+    m.type = 0;
+    ringbuffer_add_one(&xbee_ringbuffer, c);
+    msg_send_int(&m, xbee_handler_pid);
+}
 
 /* reception buffer for incoming data from XBee module */
 static uint8_t recv_buf[XBEE_RECV_BUF_SIZE];
@@ -277,6 +346,24 @@ static uint16_t expect_data_len;
 /* current checksum of the incoming data */
 static uint8_t cksum;
 
+static void xbee_wait_for_ok(void){
+	int oldstate = recv_fsm_state;
+	recv_fsm_state = RECV_FSM_OK0;
+	mutex_lock(&mutex_wait_for_ok);
+    mutex_lock(&mutex_wait_for_ok);
+    mutex_unlock(&mutex_wait_for_ok);
+    recv_fsm_state = oldstate;
+}
+
+static void xbee_read_til_cr(void){
+	int oldstate = recv_fsm_state;
+	recv_fsm_state = RECV_FSM_CR;
+	mutex_lock(&mutex_wait_for_ok);
+    mutex_lock(&mutex_wait_for_ok);
+    mutex_unlock(&mutex_wait_for_ok);
+    recv_fsm_state = oldstate;
+}
+
 /**
  * @brief Handler for incoming data from the XBee module.
  * 
@@ -286,12 +373,25 @@ static uint8_t cksum;
  *
  * @param[in] c character received from the XBee module via UART.
  */
-void xbee_incoming_char(void* arg, char c)
+void xbee_incoming_char(char c)
 {
+	//printf("[xbee] incoming: %c (0x%02x)\n", c, c);
     uint8_t in = (uint8_t) c;
     uint16_t cmd;
     uint32_t param;
     switch (recv_fsm_state) {
+    case RECV_FSM_OK0:
+    	if(c == 'O')
+    		recv_fsm_state = RECV_FSM_OK1;
+    	break;
+    case RECV_FSM_OK1:
+    	if(c == 'K')
+    		mutex_unlock(&mutex_wait_for_ok);
+    	break;
+    case RECV_FSM_CR:
+    	if(c == '\r')
+    		mutex_unlock(&mutex_wait_for_ok);
+    	break;
     case RECV_FSM_IDLE:
         if (in == 0x7e) {
             /* a new packet is beginning to arrive: wait for its size */
@@ -323,7 +423,7 @@ void xbee_incoming_char(void* arg, char c)
         /* check the received packet */
         cksum = (cksum + in) & 0xff;
         if (cksum != 0xff) {
-            puts("XBee driver: bad checksum for incoming data!");
+            puts("[xbee] bad checksum for incoming data!");
             xbee_rx_error_count++;
             recv_data_len = 0;
             recv_fsm_state = RECV_FSM_IDLE;
@@ -390,6 +490,7 @@ void xbee_incoming_char(void* arg, char c)
         break;
         recv_data_len = 0;
         recv_fsm_state = RECV_FSM_IDLE;
+        printf("[xbee] processed incoming data\n");
         DEBUG("Received and processed packet from XBee module.\n");
     }
 }
@@ -399,19 +500,30 @@ void xbee_incoming_char(void* arg, char c)
 /*                        Driver's "public" functions                        */
 /*****************************************************************************/
 
+int xbee_tx_callback(void* arg){
+ return 0;
+}
+
 void xbee_initialize(void)
 {
     int resi;
     /* no RX callback function by default */
     rx_callback = NULL;
+    
+    printf("[xbee] starting ringbuffer thread\n");
+    xbee_thread_init();
+    
+    printf("[xbee] setting up comms on uart %d\n", XBEE_UART_LINK);
+    
     /* UART initialization */
     resi = uart_init(XBEE_UART_LINK,
                     9600U,
-                    xbee_incoming_char,
-                    NULL,
+                    xbee_handle_incoming,
+                    xbee_tx_callback,
                     NULL);
     switch (resi) {
     case 0:     /* OK */
+    	//printf("[xbee] uart initialized\n");
         break;
     case -1:    /* wrong rate */
         core_panic(0x0bee,
@@ -424,41 +536,70 @@ void xbee_initialize(void)
     /* initialize mutexes */
     mutex_init(&mutex_wait_tx_status);
     mutex_init(&mutex_wait_at_reponse);
+    mutex_init(&mutex_wait_for_ok);
     /* reset sent frames counter */
     frame_id = 1;   /* 0 would mean send no response */
     /* mark reception buffer as empty */
     recv_data_len = 0;
     /* put reception fsm in idle mode */
     recv_fsm_state = RECV_FSM_IDLE;
+    
+    printf("[xbee] initializing radio module\n");
 
     /* send initial AT commands */
+    //printf("[xbee] sending +++\n");
     send_xbee('+');send_xbee('+');send_xbee('+');
+    
+    xbee_wait_for_ok();
+    
     /* reset XBee module */
+    //printf("[xbee] sending ATFR\n");
     send_xbee('A');send_xbee('T');send_xbee('F');send_xbee('R');
     send_xbee('\r');
+    xbee_wait_for_ok();
+    ROM_SysCtlDelay(10000000);
+    
+    send_xbee('+');send_xbee('+');send_xbee('+');
+    xbee_wait_for_ok();
+    
     /* disable non-802.15.4 extensions */
+    //printf("[xbee] sending ATMM2\n");
     send_xbee('A');send_xbee('T');send_xbee('M');send_xbee('M');send_xbee('2');
     send_xbee('\r');
+    xbee_wait_for_ok();
+    
     /* put XBee module in "API mode" */
+    //printf("[xbee] sending ATAP1\n");
     send_xbee('A');send_xbee('T');send_xbee('A');send_xbee('P');send_xbee('1');
     send_xbee('\r');
+    xbee_wait_for_ok();
+    
     /* apply AT commands */
+    //printf("[xbee] sending ATAC\n");
     send_xbee('A');send_xbee('T');send_xbee('A');send_xbee('C');
     send_xbee('\r');
+    xbee_wait_for_ok();
+    
+     /* exit command mode */
+    //printf("[xbee] sending ATCN\n");
+    send_xbee('A');send_xbee('T');send_xbee('C');send_xbee('N');
+    send_xbee('\r');
+    xbee_wait_for_ok();
+    
+    ROM_SysCtlDelay(50000000);
+    
     /* print firmware version of the XBee module */
-    uint8_t buf[2];
-    buf[0] = 'V';
-    buf[1] = 'R';
-    xbee_at_cmd_response_t res = xbee_send_AT_command(2, buf);
+    xbee_at_cmd_response_t res = xbee_send_AT_command(2, (uint8_t*) "VR");
     if (res.status != XBEE_AT_CMD_OK) {
         core_panic(0x0bee,
                    "failed to query firware version from XBee modem");
     }
-    printf("XBee modem initialized. Firmare version = %X.%X.%X.%X \n",
+    printf("[xbee] modem initialized. firmare version 0x%x%x%x%x.\n",
            (uint8_t)((res.parameter >> 12) & 0x0f),
            (uint8_t)((res.parameter >> 8) & 0x0f),
            (uint8_t)((res.parameter >> 4) & 0x0f),
-           (uint8_t)(res.parameter & 0x0f) );
+           (uint8_t)(res.parameter & 0x0f)
+    );
 }
 
 bool xbee_on(void){
