@@ -125,6 +125,8 @@ void isr_systick(void)               __attribute__ ((weak, alias("dummy_handler"
 /* TM4C123 specific interrupt vector */
 void isr_uart0(void)                 __attribute__ ((weak, alias("dummy_handler")));
 void isr_uart1(void)                 __attribute__ ((weak, alias("dummy_handler")));
+void isr_uart2(void)                 __attribute__ ((weak, alias("dummy_handler")));
+void isr_uart6(void)                 __attribute__ ((weak, alias("dummy_handler")));
 void isr_uart7(void) 				 __attribute__ ((weak, alias("dummy_handler")));
 void isr_tim0a(void)                 __attribute__ ((weak, alias("dummy_handler")));
 void isr_tim0b(void)                 __attribute__ ((weak, alias("dummy_handler")));
@@ -195,7 +197,7 @@ const void *interrupt_vector[] = {
     dummy_handler,                      // GPIO Port F
     dummy_handler,                      // GPIO Port G
     dummy_handler,                      // GPIO Port H
-    dummy_handler,                      // UART2 Rx and Tx
+    isr_uart2,                      // UART2 Rx and Tx
     dummy_handler,                      // SSI1 Rx and Tx
     isr_tim3a,                          // Timer 3 subtimer A
     isr_tim3b,                          // Timer 3 subtimer B
@@ -221,7 +223,7 @@ const void *interrupt_vector[] = {
     dummy_handler,                      // UART3 Rx and Tx
     dummy_handler,                      // UART4 Rx and Tx
     dummy_handler,                      // UART5 Rx and Tx
-    dummy_handler,                      // UART6 Rx and Tx
+    isr_uart6,                      // UART6 Rx and Tx
     isr_uart7,                      // UART7 Rx and Tx
     0,                                  // I2C2 Master and Slave
     0,                                  // I2C3 Master and Slave
