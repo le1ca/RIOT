@@ -375,7 +375,7 @@ static void xbee_read_til_cr(void){
  */
 void xbee_incoming_char(char c)
 {
-	//printf("[xbee] incoming: %c (0x%02x)\n", c, c);
+	//printf("[xbee] incoming: 0x%02x\n", c);
     uint8_t in = (uint8_t) c;
     uint16_t cmd;
     uint32_t param;
@@ -396,6 +396,7 @@ void xbee_incoming_char(char c)
         if (in == 0x7e) {
             /* a new packet is beginning to arrive: wait for its size */
             recv_fsm_state = RECV_FSM_SIZE1;
+            //printf("[xbee] new packet incoming\n");
         }
         break;
     case RECV_FSM_SIZE1:
@@ -405,12 +406,14 @@ void xbee_incoming_char(char c)
     case RECV_FSM_SIZE2:
         expect_data_len |= in;
         /* we now wait for the payload of the packet */
+        //printf("[xbee] waiting for %d bytes\n", expect_data_len);
         recv_fsm_state = RECV_FSM_PACKET_INCOMPLETE;
         recv_data_len = 0;
         cksum = 0;
         break;
     case RECV_FSM_PACKET_INCOMPLETE:
         /* a new byte of payload has arrived */
+        //printf("[xbee] got byte 0x%02x\n", in);
         recv_buf[recv_data_len] = in;
         recv_data_len++;
         cksum = (cksum + in) & 0xff;
@@ -423,7 +426,7 @@ void xbee_incoming_char(char c)
         /* check the received packet */
         cksum = (cksum + in) & 0xff;
         if (cksum != 0xff) {
-            puts("[xbee] bad checksum for incoming data!");
+            printf("[xbee] bad checksum for incoming data (0x%02x)", cksum);
             xbee_rx_error_count++;
             recv_data_len = 0;
             recv_fsm_state = RECV_FSM_IDLE;
@@ -432,70 +435,70 @@ void xbee_incoming_char(char c)
         ieee802154_node_addr_t src_node;
         /* process the verified payload, according to its API type */
         switch (recv_buf[0]) {
-        case 0x8a:
-            xbee_process_modem_status_event(recv_buf[1]);
-            break;
-        case 0x88:
-            cmd = ((recv_buf[2] << 8) | recv_buf[3]);
-            /* turn the parameter into a 32-bit unsigned integer */
-            param = 0;
-            for (uint8_t idx = 5; idx <= 8; idx++) {
-                if (idx >= recv_data_len) break;
-                param = (param << 8) | recv_buf[idx];
-            }
-            xbee_process_AT_command_response(recv_buf[4],
-                                             recv_buf[1],
-                                             cmd,
-                                             param);
-            break;
-        case 0x89:
-            xbee_process_tx_status(recv_buf[2],
-                                   recv_buf[1]);
-            break;
-        case 0x80:
-        case 0x82:
-            src_node.long_addr = ((uint64_t)recv_buf[1] << 56)
-                               | ((uint64_t)recv_buf[2] << 48)
-                               | ((uint64_t)recv_buf[3] << 40)
-                               | ((uint64_t)recv_buf[4] << 32)
-                               | ((uint64_t)recv_buf[5] << 24)
-                               | ((uint64_t)recv_buf[6] << 16)
-                               | ((uint64_t)recv_buf[7] << 8)
-                               | ((uint64_t)recv_buf[8]);
-            if (recv_buf[10] & 0x02) {
-                /* address broadcast for source */
-                src_node.long_addr = 0x0000FFFFull;
-            }
-            xbee_process_rx_packet(src_node,
-                                   true,
-                                   recv_buf[9],
-                                   &(recv_buf[11]),
-                                   recv_data_len - 11);
-            break;
-        case 0x81:
-        case 0x83:
-            src_node.pan.addr = ((uint64_t)recv_buf[1] << 8)
-                              | ((uint64_t)recv_buf[2]);
-            if (recv_buf[4] & 0x02) {
-                /* address broadcast for source */
-                src_node.long_addr = 0xFFFFu;
-            }
-            xbee_process_rx_packet(src_node,
-                                   false,
-                                   recv_buf[3],
-                                   &(recv_buf[5]),
-                                   recv_data_len - 5);
-            break;
-        }
-        break;
-        recv_data_len = 0;
-        recv_fsm_state = RECV_FSM_IDLE;
-        printf("[xbee] processed incoming data\n");
-        DEBUG("Received and processed packet from XBee module.\n");
-    }
+	        case 0x8a:
+    	        xbee_process_modem_status_event(recv_buf[1]);
+    	        break;
+	        case 0x88:
+	            cmd = ((recv_buf[2] << 8) | recv_buf[3]);
+	            /* turn the parameter into a 32-bit unsigned integer */
+	            param = 0;
+	            for (uint8_t idx = 5; idx <= 8; idx++) {
+	                if (idx >= recv_data_len) break;
+	                param = (param << 8) | recv_buf[idx];
+	            }
+	            xbee_process_AT_command_response(recv_buf[4],
+	                                             recv_buf[1],
+	                                             cmd,
+	                                             param);
+	            break;
+	        case 0x89:
+	            xbee_process_tx_status(recv_buf[2],
+	                                   recv_buf[1]);
+	            break;
+	        case 0x80:
+	        case 0x82:
+	            src_node.long_addr = ((uint64_t)recv_buf[1] << 56)
+	                               | ((uint64_t)recv_buf[2] << 48)
+	                               | ((uint64_t)recv_buf[3] << 40)
+	                               | ((uint64_t)recv_buf[4] << 32)
+	                               | ((uint64_t)recv_buf[5] << 24)
+	                               | ((uint64_t)recv_buf[6] << 16)
+	                               | ((uint64_t)recv_buf[7] << 8)
+	                               | ((uint64_t)recv_buf[8]);
+	            if (recv_buf[10] & 0x02) {
+	                /* address broadcast for source */
+	                src_node.long_addr = 0x0000FFFFull;
+	            }
+	            xbee_process_rx_packet(src_node,
+	                                   true,
+	                                   recv_buf[9],
+	                                   &(recv_buf[11]),
+	                                   recv_data_len - 11);
+	            break;
+	        case 0x81:
+	        case 0x83:
+	            src_node.pan.addr = ((uint64_t)recv_buf[1] << 8)
+	                              | ((uint64_t)recv_buf[2]);
+	            if (recv_buf[4] & 0x02) {
+	                /* address broadcast for source */
+	                src_node.long_addr = 0xFFFFu;
+	            }
+	            xbee_process_rx_packet(src_node,
+	                                   false,
+	                                   recv_buf[3],
+	                                   &(recv_buf[5]),
+	                                   recv_data_len - 5);
+	            break;
+		}
+	    //break;
+	    recv_data_len = 0;
+	    recv_fsm_state = RECV_FSM_IDLE;
+	    //printf("[xbee] processed incoming data\n");
+	    DEBUG("Received and processed packet from XBee module.\n");
+	}
 }
-
-
+	
+	
 /*****************************************************************************/
 /*                        Driver's "public" functions                        */
 /*****************************************************************************/
