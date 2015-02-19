@@ -68,6 +68,10 @@
 #include "ieee802154_frame.h"
 #endif
 
+#ifdef MODULE_XBEE
+#include "xbee.h"
+#endif
+
 #define ENABLE_DEBUG (0)
 #if ENABLE_DEBUG
 #undef TRANSCEIVER_STACK_SIZE
@@ -83,7 +87,7 @@ transceiver_type_t transceivers = TRANSCEIVER_NONE;
 registered_t reg[TRANSCEIVER_MAX_REGISTERED];
 
 /* packet buffers */
-#if MODULE_AT86RF231 || MODULE_CC2420 || MODULE_MC1322X
+#if MODULE_AT86RF231 || MODULE_CC2420 || MODULE_MC1322X || MODULE_XBEE
 ieee802154_packet_t transceiver_buffer[TRANSCEIVER_BUFFER_SIZE];
 #elif MODULE_TI_EMAC
 ethernet_frame transceiver_buffer[TRANSCEIVER_BUFFER_SIZE];
