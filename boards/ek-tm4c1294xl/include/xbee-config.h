@@ -23,6 +23,6 @@
 
 #include "periph/uart.h"
 
-#define XBEE_UART_LINK   UART_7
+#define XBEE_UART_LINK   UART_2
 
 #endif /* __XBEE_CONFIG_H */
