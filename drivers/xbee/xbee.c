@@ -17,9 +17,10 @@
  *
  * @}
  */
+ 
+#include <string.h>
 
 #include "xbee.h"
-
 #include "crash.h"
 #include "mutex.h"
 
@@ -34,6 +35,10 @@
 #define ENABLE_DEBUG    (0)
 #include "debug.h"
 
+#define XBEE_RECV_BUF_SIZE    128
+#define XBEE_PACKET_BUF_COUNT 8
+#define XBEE_PACKET_BUF_SIZE  (XBEE_PACKET_BUF_COUNT * sizeof(xbee_incoming_packet_t))
+#define XBEE_STACKSIZE 		  1024
 
 typedef enum xbee_at_cmd_response_kind {
     XBEE_AT_CMD_OK = 0,        /* success */
@@ -60,7 +65,6 @@ typedef enum xbee_event {
     XBEE_EVENT_COORD_START,
 } xbee_status_t;
 
-
 /* response to an AT command from XBee modem */
 typedef struct xbee_at_cmd_response {
     xbee_at_cmd_response_kind_t status;
@@ -74,6 +78,15 @@ typedef struct xbee_tx_status_report {
     xbee_tx_status_t status;
     uint8_t frame_num;
 } xbee_tx_status_report_t;
+
+/* data for an incoming packet */
+typedef struct xbee_incoming_packet {
+	char buf[XBEE_RECV_BUF_SIZE];
+	unsigned int len;
+	int8_t rssi; 
+	uint8_t lqi;
+	bool crc_ok;
+} xbee_incoming_packet_t; 
 
 
 /*****************************************************************************/
@@ -115,6 +128,9 @@ static void send_xbee(const uint8_t c)
     }
 }
 
+// forward
+void xbee_pkt_handle_incoming(xbee_incoming_packet_t *p);
+
 /* handle the reception of a data packet from XBee modem */
 static void xbee_process_rx_packet(ieee802154_node_addr_t src_addr,
                                    bool use_long_addr,
@@ -123,12 +139,20 @@ static void xbee_process_rx_packet(ieee802154_node_addr_t src_addr,
                                    unsigned int len)
 {
     /* nothing more to do than relay to upper layers, if possible */
-    if (rx_callback != NULL) {
-        /* Since we don't know LQI, we pass just 0;
-           packet validity is to be verified by the XBee modem,
-           so we assume CRC is always correct */
-        rx_callback(buf, len, rssi, 0, true);
-    }
+    //if (rx_callback != NULL) {
+    //    /* Since we don't know LQI, we pass just 0;
+    //       packet validity is to be verified by the XBee modem,
+    //       so we assume CRC is always correct */
+    //    rx_callback(buf, len, rssi, 0, true);
+    //}
+    xbee_incoming_packet_t p;
+    memcpy(p.buf, buf, len);
+    p.len = len;
+    p.rssi = rssi;
+    p.lqi = 0;
+    p.crc_ok = true;
+    xbee_pkt_handle_incoming(&p);
+    
 }
 
 /* forward declaration of the driver's init function */
@@ -255,6 +279,56 @@ static xbee_at_cmd_response_t xbee_send_AT_command(unsigned int len,
     return ret_val;
 }
 
+/*****************************************************************************/
+/*                          Passing incoming data                            */
+/*****************************************************************************/
+
+#include "irq.h"
+#include "ringbuffer.h"
+#include "msg.h"
+#include "thread.h"
+
+ringbuffer_t xbee_pkt_ringbuffer;
+kernel_pid_t xbee_pkt_handler_pid = KERNEL_PID_UNDEF;
+static char xbee_pkt_buffer[XBEE_PACKET_BUF_SIZE];
+static char xbee_pkt_thread_stack[XBEE_STACKSIZE];
+
+void *xbee_pkt_thread_entry(void* arg){
+	ringbuffer_t *rb = (ringbuffer_t *) arg;
+	msg_t m;
+	while(1){
+        msg_receive(&m);
+      	while(rb->avail >= sizeof(xbee_incoming_packet_t)) {
+      		xbee_incoming_packet_t p;
+            unsigned state = disableIRQ();
+            ringbuffer_get(rb, (char*) &p, sizeof(xbee_incoming_packet_t));
+            restoreIRQ(state);
+			rx_callback(p.buf, p.len, p.rssi, p.lqi, p.crc_ok);
+        }  
+    }
+}
+
+void xbee_pkt_thread_init(void){
+    ringbuffer_init(&xbee_pkt_ringbuffer, xbee_pkt_buffer, XBEE_PACKET_BUF_SIZE);
+    kernel_pid_t pid = thread_create(
+                  xbee_pkt_thread_stack,
+                  sizeof(xbee_pkt_thread_stack),
+                  PRIORITY_MAIN - 1,
+                  CREATE_STACKTEST | CREATE_SLEEPING,
+                  xbee_pkt_thread_entry,
+                  &xbee_pkt_ringbuffer,
+                  "xbee_rx"
+              );
+    xbee_pkt_handler_pid = pid;
+    thread_wakeup(pid);
+}
+
+void xbee_pkt_handle_incoming(xbee_incoming_packet_t *p){
+    msg_t m;
+    m.type = 0;
+    ringbuffer_add(&xbee_pkt_ringbuffer, (const char *) p, sizeof(xbee_incoming_packet_t));
+    msg_send_int(&m, xbee_pkt_handler_pid);
+}
 
 /*****************************************************************************/
 /*                          Handling incoming data                           */
@@ -264,21 +338,14 @@ unsigned int xbee_rx_error_count = 0;
 
 #include "cpu-conf.h"
 #include "chardev_thread.h"
-#include "ringbuffer.h"
-#include "thread.h"
-#include "msg.h"
 #include "posix_io.h"
-#include "irq.h"
-
-#define XBEE_RECV_BUF_SIZE   128
-#define XBEE_STACKSIZE 		 1024
 
 /* We implement a finite state machine (FSM) to handle the incoming data,
    reconstruct the packets, extract their payload, and handle its
    processing and/or forward it to the upper layers.
    The following enum lits the states of this FSM. */
 static enum {
-    RECV_FSM_IDLE,                /* no data stored for now */
+    RECV_FSM_IDLE = 0,                /* no data stored for now */
     RECV_FSM_SIZE1,               /* waiting for the first byte (MSB)
                                      of the size of the packet to come */
     RECV_FSM_SIZE2,               /* waiting for the second byte (LSB)
@@ -324,7 +391,7 @@ void xbee_thread_init(void){
                   CREATE_STACKTEST | CREATE_SLEEPING,
                   xbee_thread_entry,
                   &xbee_ringbuffer,
-                  "xbee0"
+                  "xbee_uart"
               );
     xbee_handler_pid = pid;
     thread_wakeup(pid);
@@ -432,6 +499,8 @@ void xbee_incoming_char(char c)
             recv_fsm_state = RECV_FSM_IDLE;
             return;
         }
+        //printf("[xbee] got frame from uart, type %02x\n", recv_buf[0]);
+        
         ieee802154_node_addr_t src_node;
         /* process the verified payload, according to its API type */
         switch (recv_buf[0]) {
@@ -452,6 +521,7 @@ void xbee_incoming_char(char c)
 	                                             param);
 	            break;
 	        case 0x89:
+	        	//printf("[xbee] xbee reports tx status: %02x %02x\n", recv_buf[2], recv_buf[1]);
 	            xbee_process_tx_status(recv_buf[2],
 	                                   recv_buf[1]);
 	            break;
@@ -515,6 +585,9 @@ void xbee_initialize(void)
     
     printf("[xbee] starting ringbuffer thread\n");
     xbee_thread_init();
+    
+    printf("[xbee] starting packet thread\n");
+    xbee_pkt_thread_init();
     
     printf("[xbee] setting up comms on uart %d\n", XBEE_UART_LINK);
     
@@ -707,11 +780,15 @@ radio_tx_status_t xbee_do_send(ieee802154_packet_kind_t kind,
     /* finish computing the checksum, then send it */
     sum = 0xff - sum;
     send_xbee(sum);
+    
+    //printf("[xbee] waiting for tx status, current FSM = %d\n", recv_fsm_state);
 
     /* wait for TX status response */
     mutex_lock(&mutex_wait_tx_status);
     mutex_lock(&mutex_wait_tx_status);
     mutex_unlock(&mutex_wait_tx_status); // release lock once status is here
+
+	//printf("[xbee] got tx status, current FSM = %d\n", recv_fsm_state);
 
     /* ensure status received is for TXed packet */
     if (latest_tx_report.frame_num != frame_id) {
