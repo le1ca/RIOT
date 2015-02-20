@@ -13,7 +13,7 @@
 #define UART_2_EN			1
 #define UART_2_ISR			isr_uart2
 
-#define UART_6_EN			0
+#define UART_6_EN			1
 #define UART_6_ISR			isr_uart6
 
 #define UART_7_EN			0
