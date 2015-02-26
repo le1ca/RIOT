@@ -30,6 +30,7 @@ QUIET ?= 1
 # Modules to include:
 
 USEMODULE += xbee
+USEMODULE += joseta
 USEMODULE += uart0
 USEMODULE += shell
 USEMODULE += shell_commands

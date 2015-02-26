@@ -32,8 +32,8 @@
 #include "board_uart0.h"
 #include "radio_driver.h"
 
-//#include "ieee802154_frame.h"
 #include "xbee.h"
+#include "joseta.h"
 
 uint16_t mypan;
 
@@ -85,6 +85,8 @@ int main(void)
 	mypan = xbee_radio_driver.get_pan_id();
 	printf("[xbee] pan id is 0x%04x\n", mypan);
 	printf("[xbee] channel is 0x%08x\n", xbee_radio_driver.get_channel());
+	
+	joseta_init(0);
 
     (void) puts("Welcome to RIOT!");
 
