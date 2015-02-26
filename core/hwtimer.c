@@ -52,10 +52,11 @@ static int lifo[HWTIMER_MAXTIMERS + 1];
 
 static void multiplexer(int source)
 {
-    lifo_insert(lifo, source);
-    lpm_prevent_sleep--;
-
-    timer[source].callback(timer[source].data);
+	if(timer[source].callback){
+	    timer[source].callback(timer[source].data);
+		lifo_insert(lifo, source);
+	    lpm_prevent_sleep--;	    
+	}
 }
 
 static void hwtimer_releasemutex(void* mutex) {
