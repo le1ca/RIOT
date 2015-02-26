@@ -146,9 +146,9 @@ int timer_init(tim_t dev, unsigned int ticks_per_us, void (*callback)(int)) {
     //DEBUG("timer irq is %d\n", get_timer_irq(dev));
 
     // enable timeout interrupt, just because
-    //timer_irq_enable(dev);
+    timer_irq_enable(dev);
     ROM_TimerIntEnable(timer, TIMER_TIMA_TIMEOUT);
-    //ROM_TimerIntEnable(timer, TIMER_TIMA_MATCH);
+    ROM_TimerIntEnable(timer, TIMER_TIMA_MATCH);
     
     //DEBUG("timer init'd\n");
 
@@ -318,15 +318,24 @@ __attribute__ ((naked)) void TIMER_5_ISR(void)
 
 static inline void irq_handler(tim_t timer, TIMER0_Type *dev)
 {
+
     if (ROM_TimerIntStatus((uint32_t) dev, 0) & TIMER_TIMA_TIMEOUT) {
         ROM_TimerIntClear ((uint32_t) dev, TIMER_TIMA_TIMEOUT);
         DEBUG("Timer %d overflowed\n", timer);
+        //printf("timer %d overflow\n", timer);
         ++overflow[timer];
-    } else if (ROM_TimerIntStatus((uint32_t) dev, 0) & TIMER_TIMA_MATCH) {
+    }
+    else if (ROM_TimerIntStatus((uint32_t) dev, 0) & TIMER_TIMA_MATCH) {
         ROM_TimerIntClear ((uint32_t) dev, TIMER_TIMA_MATCH);
-        timer_irq_disable(timer);
+        //timer_irq_disable(timer);
         DEBUG("timer %d matched\n", timer);
-        config[timer].cb(timer);
+        //printf("timer %d match\n", timer);
+        if(config[timer].cb){
+	        config[timer].cb(timer);
+	    }
+    }
+    else{
+    	//printf("timer %d unknown\n", timer);
     }
 
     if (sched_context_switch_request) {
