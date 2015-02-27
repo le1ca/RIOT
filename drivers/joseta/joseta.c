@@ -361,6 +361,7 @@ void joseta_send_frame(uint8_t type, uint8_t payload){
 
 /* send request for data frame(s) */
 void joseta_send_dreq(uint8_t addr){
+	joseta_state.fsm = JOSETA_FSM_READ;
 	joseta_send_frame(0x1, addr << 4);
 }
 
@@ -395,11 +396,11 @@ void joseta_timer_cb(int arg){
 				joseta_state.rtc--;
 				drift = true;
 			}
-			if(joseta_state.rtc % 86400 == 0){
+			if((joseta_state.rtc - joseta_state.epoch) % 86400 == 0){
 				msg_send(&m, joseta_state.callback_pid);
 				m.type = JOSETA_CB_RESET;
 			}
-			else if(joseta_state.rtc % 60 == 0){
+			else if((joseta_state.rtc - joseta_state.epoch) % 60 == 0){
 				m.type = JOSETA_CB_TIMER;
 				msg_send(&m, joseta_state.callback_pid);
 			}
