@@ -177,8 +177,10 @@ int uart_init_blocking(uart_t uart, uint32_t baudrate)
     
     ROM_UARTDisable(get_uart_base(uart));
 
-   	ROM_UARTFlowControlSet(get_uart_base(uart), UART_FLOWCONTROL_TX | UART_FLOWCONTROL_RX);
-   	ROM_UARTModemControlSet(get_uart_base(uart), UART_OUTPUT_RTS);
+	if(uart != UART_7){
+	   	ROM_UARTFlowControlSet(get_uart_base(uart), UART_FLOWCONTROL_TX | UART_FLOWCONTROL_RX);
+	   	ROM_UARTModemControlSet(get_uart_base(uart), UART_OUTPUT_RTS);
+	}
 
 	/* connect uart to system clock */
     ROM_UARTClockSourceSet(get_uart_base(uart), UART_CLOCK_PIOSC);
