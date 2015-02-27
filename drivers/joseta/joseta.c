@@ -38,7 +38,7 @@ void joseta_uart_init(void){
 void joseta_timer_init(void){
 
 	/* set callback */
-	timer_init(TIMER_3, 1, joseta_timer_cb);
+	timer_init(JOSETA_TIMER_NUM, 1, joseta_timer_cb);
 	
 	/* custom timer configuration */
 	ROM_TimerDisable(JOSETA_TIMER_BASE, TIMER_A);
@@ -114,12 +114,20 @@ void joseta_state_init(uint64_t rtc){
 
 /* send initialization commands to board */
 void joseta_board_init(void){
-
+	joseta_state.fsm = JOSETA_FSM_INIT;
+	joseta_send_reset();
 }
 
 /* set new epoch */
 void joseta_finish_init(void){
+	joseta_state.epoch = joseta_state.rtc;
+	joseta_send_time(0);
+}
 
+/* set cb function */
+void joseta_setcallback(joseta_cb_t fun, uint8_t mask){
+	joseta_state.callback = fun;
+	joseta_state.callback_mask = mask;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -155,6 +163,12 @@ void *joseta_callback_loop(void *arg){
         switch(m.type){
         
         	case JOSETA_CB_TIMER: {
+        		joseta_request_minute();
+        		break;
+        	}
+        	
+        	case JOSETA_CB_RESET: {
+        		joseta_state.pending_reset = true;
         		joseta_request_minute();
         		break;
         	}
@@ -256,7 +270,14 @@ void joseta_uart_byte(char c){
 				
 				/* decrement number of frames we are expecting, check if done */
 				if((--joseta_state.expected_frames) == 0){
-					joseta_state.fsm = JOSETA_FSM_IDLE;
+					if(joseta_state.pending_reset){
+						joseta_state.fsm = JOSETA_FSM_INIT;
+						joseta_send_reset();
+						joseta_state.pending_reset = false;
+					}
+					else{
+						joseta_state.fsm = JOSETA_FSM_IDLE;
+					}
 				}
 				
 				break;
@@ -264,7 +285,7 @@ void joseta_uart_byte(char c){
 			
 			/* data frame was a request for epoch */
 			case JOSETA_FSM_INIT: {
-				printf("[joseta] board has reset, setting epoch\n");
+				printf("[joseta] board has reset, setting new epoch\n");
 				joseta_finish_init();
 				joseta_state.fsm = JOSETA_FSM_IDLE;
 				break;
@@ -295,10 +316,6 @@ void joseta_process_frame(void){
 	
 	if(!joseta_verify_crc()){
 		printf("[joseta] discarding frame with bad crc\n");
-	}
-	else if(frame->error & JOSETA_ERROR_RESET){
-		printf("[joseta] unit has reset\n");
-		joseta_finish_init();
 	}
 	else{
 		/* parse frame */
@@ -353,6 +370,16 @@ void joseta_request_minute(void){
 	joseta_send_dreq(0);
 }
 
+/* send time */
+void joseta_send_time(uint8_t time){
+	joseta_send_frame(0x04, 0x80 | time);
+}
+
+/* reset the sensor device */
+void joseta_send_reset(void){
+	joseta_send_frame(0x4, 0);
+}
+
 /* tick rtc and trigger request every minute */
 void joseta_timer_cb(int arg){
 	static uint32_t ticks = 0;
@@ -368,7 +395,11 @@ void joseta_timer_cb(int arg){
 				joseta_state.rtc--;
 				drift = true;
 			}
-			if(joseta_state.rtc % 60 == 0){
+			if(joseta_state.rtc % 86400 == 0){
+				msg_send(&m, joseta_state.callback_pid);
+				m.type = JOSETA_CB_RESET;
+			}
+			else if(joseta_state.rtc % 60 == 0){
 				m.type = JOSETA_CB_TIMER;
 				msg_send(&m, joseta_state.callback_pid);
 			}

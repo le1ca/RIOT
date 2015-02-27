@@ -28,6 +28,7 @@
 #define JOSETA_CB_FRAME 1
 #define JOSETA_CB_PURGE 2
 #define JOSETA_CB_ERROR 4
+#define JOSETA_CB_RESET 8
 
 /* specification for parsed data frame */
 typedef struct joseta_df {
@@ -53,6 +54,6 @@ void joseta_init(uint64_t rtc);
 void joseta_setpurgethresh(unsigned int num_records);
 
 /* set function to call when events occur */
-void joseta_setcallback(joseta_cb_t fun);
+void joseta_setcallback(joseta_cb_t fun, uint8_t mask);
 
 #endif

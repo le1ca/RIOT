@@ -19,6 +19,7 @@
 
 #define JOSETA_COMMON_FRAME_LEN (sizeof(joseta_df_t) - 2*sizeof(bool))
 
+#define JOSETA_TIMER_NUM        TIMER_3
 #define JOSETA_TIMER_BASE       TIMER3_BASE
 #define JOSETA_TIMER_HZ         (uint32_t) 16000000L
 #define JOSETA_TIMER_MAX        ((JOSETA_TIMER_HZ/1000)+94)
@@ -59,6 +60,7 @@ typedef struct joseta_state_t {
 	char current_frame[JOSETA_RAW_FRAME_SIZE];
 	unsigned int current_frame_idx;
 	unsigned int expected_frames;
+	bool pending_reset;
 	
 } joseta_state_t;
 
@@ -84,7 +86,9 @@ void joseta_timer_cb(int arg);
 void joseta_finish_init(void);
 void joseta_request_minute(void);
 void joseta_process_frame(void);
+void joseta_send_time(uint8_t time);
 void joseta_send_dreq(uint8_t addr);
+void joseta_send_reset(void);
 void joseta_serial_recv(void *arg, char c);
 void joseta_uart_byte(char c);
 void *joseta_serial_loop(void *arg);
