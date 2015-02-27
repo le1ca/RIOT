@@ -15,12 +15,12 @@
 #define JOSETA_BUFFER_SIZE  (JOSETA_BUFFER_COUNT * sizeof(joseta_df_t))
 
 /* uart config */
-#define JOSETA_UART 	UART_6
+#define JOSETA_UART 	UART_7
 #define JOSETA_UART_BUF	128
 
 /* default settings */
 #define JOSETA_DEFAULT_PURGETHRESH (JOSETA_BUFFER_COUNT / 2)
-#define JOSETA_SERIAL_STACK   256
+#define JOSETA_SERIAL_STACK   512
 #define JOSETA_CALLBACK_STACK 3072
 
 /* callback masking */
