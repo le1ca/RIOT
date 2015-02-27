@@ -74,6 +74,10 @@ void xbee_rx(void *buf, unsigned int len, int8_t rssi, uint8_t lqi, bool crc_ok)
 	);
 }
 
+void j_callback(unsigned int type, joseta_df_t *buf, unsigned int num_records){
+	printf("[joseta] t=%llu, temp=%d\n", buf->time, buf->temp);
+}	
+
 int main(void)
 {
     shell_t shell;
@@ -87,6 +91,7 @@ int main(void)
 	printf("[xbee] channel is 0x%08x\n", xbee_radio_driver.get_channel());
 	
 	joseta_init(0);
+	joseta_setcallback(j_callback, JOSETA_CB_FRAME);
 
     (void) puts("Welcome to RIOT!");
 
