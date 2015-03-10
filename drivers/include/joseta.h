@@ -21,7 +21,7 @@
 /* default settings */
 #define JOSETA_DEFAULT_PURGETHRESH (JOSETA_BUFFER_COUNT / 2)
 #define JOSETA_SERIAL_STACK   512
-#define JOSETA_CALLBACK_STACK 3072
+#define JOSETA_CALLBACK_STACK (2048 + JOSETA_BUFFER_SIZE)
 
 /* callback masking */
 #define JOSETA_CB_TIMER 0
@@ -31,7 +31,7 @@
 #define JOSETA_CB_RESET 8
 
 /* specification for parsed data frame */
-typedef struct joseta_df {
+typedef struct __attribute__ ((__packed__)) joseta_df {
 	bool occupancy;
 	bool relay;
 	uint16_t voltage;

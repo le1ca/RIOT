@@ -64,7 +64,7 @@ typedef struct joseta_state_t {
 	
 } joseta_state_t;
 
-typedef struct joseta_raw_frame_t {
+typedef struct  __attribute__ ((__packed__)) joseta_raw_frame_t {
 	uint8_t  flags;
 	uint16_t voltage;
 	uint16_t current;
