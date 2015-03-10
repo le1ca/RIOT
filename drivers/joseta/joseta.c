@@ -115,6 +115,7 @@ void joseta_state_init(uint64_t rtc){
 /* send initialization commands to board */
 void joseta_board_init(void){
 	joseta_state.fsm = JOSETA_FSM_INIT;
+	printf("[joseta] sent reset command\n");
 	joseta_send_reset();
 }
 
@@ -163,17 +164,20 @@ void *joseta_callback_loop(void *arg){
         switch(m.type){
         
         	case JOSETA_CB_TIMER: {
+        		printf("[joseta] event: 1-minute timer expired\n");
         		joseta_request_minute();
         		break;
         	}
         	
         	case JOSETA_CB_RESET: {
+        		printf("[joseta] event: initiate reset\n");
         		joseta_state.pending_reset = true;
         		joseta_request_minute();
         		break;
         	}
         
         	case JOSETA_CB_FRAME: {
+        		printf("[joseta] event: processed frame\n");
         		if(joseta_state.callback &&
         		   joseta_state.callback_mask & JOSETA_CB_FRAME
         		){
@@ -187,7 +191,7 @@ void *joseta_callback_loop(void *arg){
 			}
 			
 			case JOSETA_CB_PURGE: {
-			
+				printf("[joseta] event: purge\n");
 				joseta_df_t p[JOSETA_BUFFER_COUNT];
 				unsigned count = rb->avail / sizeof(joseta_df_t);
 				
@@ -204,11 +208,14 @@ void *joseta_callback_loop(void *arg){
 					joseta_state.callback(m.type, p, count);
 				}
 				
+				printf("[joseta] purge complete\n");
+				
 				break;
 				
 			}
 			
 			case JOSETA_CB_ERROR: {
+				printf("[joseta] event: error\n");
 				if(joseta_state.callback &&
         		   joseta_state.callback_mask & JOSETA_CB_ERROR
         		){
@@ -239,6 +246,7 @@ void *joseta_callback_loop(void *arg){
 void joseta_serial_recv(void *arg, char c){
     msg_t m;
     m.type = 0;
+    //printf("got char %02x\n", c);
     ringbuffer_add_one(&joseta_state.serial_ringbuffer, c);
     msg_send_int(&m, joseta_state.serial_pid);
 }
@@ -248,8 +256,12 @@ void joseta_uart_byte(char c){
 
 	joseta_state.current_frame[joseta_state.current_frame_idx++] = c;
 			
+	//printf("%u ", c);
+			
 	/* if frame complete */
 	if(joseta_state.current_frame_idx == JOSETA_RAW_FRAME_SIZE){
+		
+		//printf("\n");
 		
 		/* reset counter */
 		joseta_state.current_frame_idx = 0;
@@ -266,6 +278,7 @@ void joseta_uart_byte(char c){
 			case JOSETA_FSM_READ: {
 				
 				/* process this frame */
+				printf("[joseta] recv frame\n");
 				joseta_process_frame();
 				
 				/* decrement number of frames we are expecting, check if done */
@@ -277,7 +290,11 @@ void joseta_uart_byte(char c){
 					}
 					else{
 						joseta_state.fsm = JOSETA_FSM_IDLE;
+						printf("[joseta] got all expected frames\n");
 					}
+				}
+				else{
+					printf("[joseta] expecting %d more frames\n", joseta_state.expected_frames);
 				}
 				
 				break;
@@ -310,7 +327,7 @@ bool joseta_verify_crc(void){
 
 /* process current buffered frame */
 void joseta_process_frame(void){
-	joseta_raw_frame_t *frame = (joseta_raw_frame_t*)joseta_state.current_frame;
+	joseta_raw_frame_t *frame = (joseta_raw_frame_t*) joseta_state.current_frame;
 	joseta_df_t parsed;
 	msg_t m1, m2;
 	
@@ -318,12 +335,16 @@ void joseta_process_frame(void){
 		printf("[joseta] discarding frame with bad crc\n");
 	}
 	else{
+	
 		/* parse frame */
 		parsed.occupancy = frame->flags & JOSETA_FLAG_OCCUPANCY;
-		parsed.relay     = frame->flags * JOSETA_FLAG_RELAY;
-		memcpy((char*) &parsed.voltage, (char*) &frame->voltage,
-		       JOSETA_COMMON_FRAME_LEN
-		);
+		parsed.relay     = frame->flags & JOSETA_FLAG_RELAY;
+		parsed.voltage   = frame->voltage;
+		parsed.current   = frame->current;
+		parsed.phase     = frame->phase;
+		parsed.temp      = frame->temperature;
+		parsed.time      = frame->timestamp + joseta_state.epoch;
+		parsed.error     = frame->error;
 		
 		/* pass to handler thread */
 		ringbuffer_add(&joseta_state.frame_ringbuffer,
@@ -338,6 +359,7 @@ void joseta_process_frame(void){
 			m2.type = JOSETA_CB_PURGE;
 			msg_send(&m2, joseta_state.callback_pid);
 		}
+		
 	}
 }
 
@@ -368,7 +390,7 @@ void joseta_send_dreq(uint8_t addr){
 /* request one minute worth of data */
 void joseta_request_minute(void){
 	joseta_state.expected_frames = 60;
-	joseta_send_dreq(0);
+	joseta_send_dreq(0xf);
 }
 
 /* send time */
@@ -400,7 +422,7 @@ void joseta_timer_cb(int arg){
 				msg_send(&m, joseta_state.callback_pid);
 				m.type = JOSETA_CB_RESET;
 			}
-			else if((joseta_state.rtc - joseta_state.epoch) % 60 == 0){
+			else if((joseta_state.rtc - joseta_state.epoch) % 60 == 5){
 				m.type = JOSETA_CB_TIMER;
 				msg_send(&m, joseta_state.callback_pid);
 			}
