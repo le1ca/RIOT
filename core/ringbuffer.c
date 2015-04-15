@@ -140,3 +140,12 @@ unsigned ringbuffer_peek(const ringbuffer_t *restrict rb_, char *buf, unsigned n
     ringbuffer_t rb = *rb_;
     return ringbuffer_get(&rb, buf, n);
 }
+
+unsigned ringbuffer_peek_n_at(const ringbuffer_t *restrict rb_, char *buf, unsigned n, unsigned offset)
+{
+    ringbuffer_t rb = *rb_;
+    rb.start += offset;
+    while(rb.start >= rb.size)
+        rb.start -= rb.size;
+    return ringbuffer_get(&rb, buf, n);
+}

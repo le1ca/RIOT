@@ -150,6 +150,16 @@ int ringbuffer_peek_one(const ringbuffer_t *__restrict rb);
  */
 unsigned ringbuffer_peek(const ringbuffer_t *__restrict rb, char *buf, unsigned n);
 
+/**
+ * @brief           Read, but don't remove, the a number of element of the buffer while skipping the head.
+ * @param[in]       rb     Ringbuffer to operate on.
+ * @param[out]      buf    Buffer to write into.
+ * @param[in]       n      Read at most n elements.
+ * @param[in]       offset Skip the first offset elements
+ * @returns         n bytes starting at offset
+ */
+unsigned ringbuffer_peek_n_at(const ringbuffer_t *restrict rb_, char *buf, unsigned n, unsigned offset);
+
 #ifdef __cplusplus
 }
 #endif
