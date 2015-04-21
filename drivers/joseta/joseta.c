@@ -247,7 +247,6 @@ void *joseta_callback_loop(void *arg){
 void joseta_serial_recv(void *arg, char c){
     msg_t m;
     m.type = 0;
-    //printf("got char %02x\n", c);
     ringbuffer_add_one(&joseta_state.serial_ringbuffer, c);
     msg_send_int(&m, joseta_state.serial_pid);
 }
