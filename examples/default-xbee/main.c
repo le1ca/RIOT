@@ -96,8 +96,8 @@ int main(void)
 	printf("[xbee] address is 0x%04x\n", myaddr);
 	printf("[xbee] channel is 0x%08x\n", xbee_radio_driver.get_channel());
 	
-	//joseta_init(0);
-	//joseta_setcallback(j_callback, JOSETA_CB_PURGE);
+	joseta_init(0);
+	joseta_setcallback(j_callback, JOSETA_CB_PURGE);
 
     (void) puts("Welcome to RIOT!");
     rt_init_driver(myaddr, xbee_tx, incoming_packet);
