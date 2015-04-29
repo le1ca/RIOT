@@ -18,7 +18,7 @@ radio_trans_state rt_state;
 
 /* thread stacks */
 char rt_tx_thread_stack[RT_THREAD_STACK_SIZE];
-char rt_rx_thread_stack[RT_THREAD_STACK_SIZE];
+char rt_cb_thread_stack[RT_THREAD_STACK_SIZE];
 
 /* forward decls */
 void rt_timer_init(void);
@@ -26,8 +26,10 @@ void rt_timer_cb(int arg);
 void rt_timer_start(void);
 void rt_timer_stop(void);
 void rt_tx_thread_init(void);
+void rt_cb_thread_init(void);
 bool rt_checksum_good(char *payload, uint8_t len);
 void *rt_tx_loop(void *arg);
+void *rt_cb_loop(void *arg);
 void rt_add_pkt(uint8_t type, uint8_t pkg_no, uint8_t seq_no, uint8_t seg_ct, char *buff, uint8_t len);
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
@@ -42,7 +44,8 @@ void rt_init_driver(uint16_t uuid, rt_radio_tx tx_func, rt_package_cb rx_func){
     rt_state.rx_func = rx_func;
     
     /* ringbuffers */
-    ringbuffer_init(&rt_state.rx_ringbuffer, rt_state.rx_window, RTRANS_WINDOW);
+    //ringbuffer_init(&rt_state.rx_ringbuffer, rt_state.rx_window, RTRANS_WINDOW);
+    ringbuffer_init(&rt_state.cb_ringbuffer, rt_state.cb_window, RTRANS_WINDOW);
     ringbuffer_init(&rt_state.tx_ringbuffer, rt_state.tx_window, RTRANS_WINDOW);
     
     /* mutexes */
@@ -54,6 +57,9 @@ void rt_init_driver(uint16_t uuid, rt_radio_tx tx_func, rt_package_cb rx_func){
     
     /* tx thread */
     rt_tx_thread_init();
+    
+    /* cb thrad */
+    rt_cb_thread_init();
 }
 
 void rt_timer_init(void){
@@ -78,6 +84,19 @@ void rt_tx_thread_init(void){
                                      "rt_tx"
     );
     rt_state.tx_pid = pid;
+    thread_wakeup(pid);
+}
+
+void rt_cb_thread_init(void){
+    kernel_pid_t pid = thread_create(rt_cb_thread_stack,
+                                     sizeof(rt_cb_thread_stack),
+                                     PRIORITY_MAIN - 1,
+                                     CREATE_STACKTEST | CREATE_SLEEPING,
+                                     rt_cb_loop,
+                                     &rt_state.cb_ringbuffer,
+                                     "rt_cb"
+    );
+    rt_state.cb_pid = pid;
     thread_wakeup(pid);
 }
 
@@ -135,9 +154,11 @@ void rt_add_pkt(uint8_t type, uint8_t pkg_no, uint8_t seq_no, uint8_t seg_ct, ch
      
      // wait for sufficient space in ringbuffer: payload + header + checksum
      while(RB_FREE_SPACE(rt_state.tx_ringbuffer) < len + RTRANS_HDR_LEN + 1){
+        //printf("[rt] waiting for buffer to clear\n");
         mutex_lock(&rt_state.tx_mutex);
         mutex_lock(&rt_state.tx_mutex);
         mutex_unlock(&rt_state.tx_mutex);
+        //printf("[rt] proceeding\n");
      }
      
      // add to ringbuffer
@@ -241,7 +262,12 @@ void rt_incoming(char *payload, uint8_t len){
         case RTRANS_TYPE_PROBE:
         case RTRANS_TYPE_POLL:
         case RTRANS_TYPE_SET:   {
-            rt_state.rx_func(pbuf);
+            msg_t m;
+            m.type = 0;
+            if(ringbuffer_add(&rt_state.cb_ringbuffer, (char*) pbuf, pbuf->hdr.len + RTRANS_HDR_LEN + 1) != pbuf->hdr.len + RTRANS_HDR_LEN + 1){
+                printf("[rt] error: rx buffer overflow\n");
+            }
+            msg_send_int(&m, rt_state.cb_pid);
             break;
         }
         
@@ -292,6 +318,24 @@ bool rt_checksum_good(char *payload, uint8_t len){
     
     /* verify correctnes */
     return (acc == 0xff);
+}
+
+void *rt_cb_loop(void *arg){
+    char buffer[RTRANS_MAX_PKT_LEN];
+    radio_trans_pkt *pbuf = (radio_trans_pkt *) buffer;
+    ringbuffer_t *rb = (ringbuffer_t *) arg;
+    msg_t m;
+    while(1){
+        msg_receive(&m);
+        while (rb->avail) {
+            unsigned state = disableIRQ();
+            ringbuffer_peek(rb, buffer, RTRANS_HDR_LEN);
+            ringbuffer_get(rb, buffer, RTRANS_HDR_LEN + pbuf->hdr.len + 1);
+            restoreIRQ(state);
+            rt_state.rx_func(pbuf);
+        }
+    }
+    return 0;
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */

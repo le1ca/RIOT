@@ -14,8 +14,8 @@
 #define RTRANS_TIMER_NUM        TIMER_4
 #define RTRANS_TIMER_BASE       TIMER4_BASE
 #define RTRANS_TIMER_HZ         (uint32_t) 16000000L
-#define RTRANS_TIMER_MAX        0xffffffff //((RTRANS_TIMER_HZ/1000)+94)
-#define RTRANS_TIMER_PRESCALE   (uint32_t) 127
+#define RTRANS_TIMER_MAX        0xffffff00
+#define RTRANS_TIMER_PRESCALE   (uint32_t) 125
 
 /* stack size */
 #define RT_THREAD_STACK_SIZE 1024
@@ -47,7 +47,7 @@
 #define RTRANS_MAX_RETRY 8
 
 /* total packet size */
-#define RTRANS_MAX_PKT_LEN (96)
+#define RTRANS_MAX_PKT_LEN (100)
 
 /* header size (10b) */
 #define RTRANS_HDR_LEN (sizeof(struct radio_trans_hdr_s))
@@ -85,6 +85,11 @@ typedef struct radio_trans_state_s {
     
     kernel_pid_t tx_pid;
     ringbuffer_t tx_ringbuffer;
+    
+    kernel_pid_t cb_pid;
+    ringbuffer_t cb_ringbuffer;    
+    char         cb_window[RTRANS_WINDOW];
+    
     mutex_t      tx_mutex, retx_mutex;
     uint8_t      tx_wait_pkg, tx_wait_seq;
     uint8_t      tx_retries;
@@ -92,10 +97,10 @@ typedef struct radio_trans_state_s {
     char         tx_window[RTRANS_WINDOW];
     uint8_t      tx_pkg_no;
     
-    kernel_pid_t rx_pid;
-    ringbuffer_t rx_ringbuffer;
-    char         rx_window[RTRANS_WINDOW];
-    uint8_t      rx_window_seq;
+    //kernel_pid_t rx_pid;
+    //ringbuffer_t rx_ringbuffer;
+    //char         rx_window[RTRANS_WINDOW];
+    //uint8_t      rx_window_seq;
     
 } radio_trans_state;
 
