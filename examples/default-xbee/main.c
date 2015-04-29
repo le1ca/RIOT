@@ -60,14 +60,13 @@ void xbee_rx(void *buf, unsigned int len, int8_t rssi, uint8_t lqi, bool crc_ok)
 
 void j_callback(unsigned int type, joseta_df_t *buf, unsigned int num_records){
     if(type == JOSETA_CB_PURGE){
-        /*for(unsigned i = 0; i < num_records; i++)
+        for(unsigned i = 0; i < num_records; i++)
             printf("[joseta] time=%lu, voltage=%u, curent=%u, temp=%d\n",
                     (unsigned long) buf[i].time,
                     (unsigned) buf[i].voltage,
                     (unsigned) buf[i].current,
                     (unsigned) buf[i].temp
             );
-        */
         printf("[joseta] purged %d records\n", num_records);
         memcpy(joseta_last_minute, buf, sizeof(joseta_df_t) * num_records);
         joseta_fresh = true;
@@ -89,15 +88,15 @@ void incoming_packet(radio_trans_pkt* packet){
                 uint32_t offset = 0;
                 int i;
                 for(i = 0; i < 60; i++){
-                    offset += app_append_sample(next + offset, APP_PKT_BUFFER_SIZE - offset, ja_types[0], joseta_last_minute[i].occupancy);
-                    offset += app_append_sample(next + offset, APP_PKT_BUFFER_SIZE - offset, ja_types[1], joseta_last_minute[i].relay);
-                    offset += app_append_sample(next + offset, APP_PKT_BUFFER_SIZE - offset, ja_types[2], joseta_last_minute[i].voltage);
-                    offset += app_append_sample(next + offset, APP_PKT_BUFFER_SIZE - offset, ja_types[3], joseta_last_minute[i].current);
-                    offset += app_append_sample(next + offset, APP_PKT_BUFFER_SIZE - offset, ja_types[4], joseta_last_minute[i].phase);
-                    offset += app_append_sample(next + offset, APP_PKT_BUFFER_SIZE - offset, ja_types[5], joseta_last_minute[i].temp);
-                    offset += app_append_sample(next + offset, APP_PKT_BUFFER_SIZE - offset, ja_types[6], joseta_last_minute[i].time);
+                    offset += app_append_sample(next + offset, APP_PKT_BUFFER_SIZE - offset, ja_types[0], &joseta_last_minute[i].occupancy);
+                    offset += app_append_sample(next + offset, APP_PKT_BUFFER_SIZE - offset, ja_types[1], &joseta_last_minute[i].relay);
+                    offset += app_append_sample(next + offset, APP_PKT_BUFFER_SIZE - offset, ja_types[2], &joseta_last_minute[i].voltage);
+                    offset += app_append_sample(next + offset, APP_PKT_BUFFER_SIZE - offset, ja_types[3], &joseta_last_minute[i].current);
+                    offset += app_append_sample(next + offset, APP_PKT_BUFFER_SIZE - offset, ja_types[4], &joseta_last_minute[i].phase);
+                    offset += app_append_sample(next + offset, APP_PKT_BUFFER_SIZE - offset, ja_types[5], &joseta_last_minute[i].temp);
+                    offset += app_append_sample(next + offset, APP_PKT_BUFFER_SIZE - offset, ja_types[6], &joseta_last_minute[i].time);
                 }
-                uint16_t plen = app_build_pkt(abuf2, APP_PKT_BUFFER_SIZE, 60, 6, ja_names, (void *) abuf1, offset);
+                uint16_t plen = app_build_pkt(abuf2, APP_PKT_BUFFER_SIZE, 60, 7, ja_names, (void *) abuf1, offset);
                 printf("[ra] constructed packet of size %u\n", plen);
                 rt_transmit(RTRANS_TYPE_DATA, abuf2, plen);
                 joseta_fresh = false;
