@@ -422,6 +422,7 @@ static void xbee_wait_for_ok(void){
     recv_fsm_state = oldstate;
 }
 
+/*
 static void xbee_read_til_cr(void){
 	int oldstate = recv_fsm_state;
 	recv_fsm_state = RECV_FSM_CR;
@@ -430,6 +431,7 @@ static void xbee_read_til_cr(void){
     mutex_unlock(&mutex_wait_for_ok);
     recv_fsm_state = oldstate;
 }
+*/
 
 /**
  * @brief Handler for incoming data from the XBee module.
