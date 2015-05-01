@@ -64,4 +64,7 @@ typedef struct __attribute__ ((__packed__)) radio_app_pkt_s {
     radio_app_sset sets[0];
 } radio_app_pkt;
 
+uint16_t app_build_pkt(void *buffer, uint16_t b_len, uint8_t sset_ct, uint8_t samp_ct, char *names[], radio_app_sset *ssets, uint16_t sslen);
+uint16_t app_append_sample(void *buf, uint16_t b_len, uint8_t type, void *value);
+
 #endif
