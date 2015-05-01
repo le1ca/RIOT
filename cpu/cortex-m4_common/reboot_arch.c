@@ -26,9 +26,7 @@
 
 int reboot_arch(int mode)
 {
-    printf("Going into reboot, mode %i\n", mode);
-    /* wait 1 ms to make sure the printf is finished */
-    hwtimer_wait(HWTIMER_TICKS(1000));
     NVIC_SystemReset();
+    while(1);
     return -1;
 }
