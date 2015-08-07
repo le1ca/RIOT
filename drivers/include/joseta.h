@@ -20,7 +20,7 @@
 
 /* default settings */
 #define JOSETA_DEFAULT_PURGETHRESH (JOSETA_BUFFER_COUNT / 2)
-#define JOSETA_SERIAL_STACK   512
+#define JOSETA_SERIAL_STACK   (1024)
 #define JOSETA_CALLBACK_STACK (2048 + JOSETA_BUFFER_SIZE)
 
 /* callback masking */
