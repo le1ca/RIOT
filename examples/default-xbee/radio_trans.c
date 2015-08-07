@@ -152,6 +152,10 @@ void rt_add_pkt(uint8_t type, uint8_t pkg_no, uint8_t seq_no, uint8_t seg_ct, ch
         pbuf->payload[len] -= buffer[i];
      }
      
+     // make sure a transmission is not ongoing
+     mutex_lock(&rt_state.tx_mutex);
+     mutex_unlock(&rt_state.tx_mutex);
+     
      // wait for sufficient space in ringbuffer: payload + header + checksum
      while(RB_FREE_SPACE(rt_state.tx_ringbuffer) < len + RTRANS_HDR_LEN + 1){
         //printf("[rt] waiting for buffer to clear\n");
