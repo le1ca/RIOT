@@ -14,7 +14,7 @@
 #define RTRANS_TIMER_NUM        TIMER_4
 #define RTRANS_TIMER_BASE       TIMER4_BASE
 #define RTRANS_TIMER_HZ         (uint32_t) 16000000L
-#define RTRANS_TIMER_MAX        0xffffff00
+#define RTRANS_TIMER_MAX        0xffffffff
 #define RTRANS_TIMER_PRESCALE   (uint32_t) 125
 
 /* stack size */
@@ -55,8 +55,8 @@
 /* max payload size (85b) */
 #define RTRANS_MAX_PAYLOAD (RTRANS_MAX_PKT_LEN - RTRANS_HDR_LEN - 1)
 
-/* max number of segments - each package can be 1020 bytes */
-#define RTRANS_MAX_SEGS (12)
+/* max number of segments - each package can be 1360 bytes */
+#define RTRANS_MAX_SEGS (16)
 
 /* radio address length in bytes */
 #define RTRANS_ADDR_LEN (2)
