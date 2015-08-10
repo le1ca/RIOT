@@ -152,21 +152,23 @@ void rt_add_pkt(uint8_t type, uint8_t pkg_no, uint8_t seq_no, uint8_t seg_ct, ch
         pbuf->payload[len] -= buffer[i];
      }
      
+     // make sure a transmission is not ongoing
+     mutex_lock(&rt_state.tx_mutex);
+     mutex_unlock(&rt_state.tx_mutex);
+     
      // wait for sufficient space in ringbuffer: payload + header + checksum
      while(RB_FREE_SPACE(rt_state.tx_ringbuffer) < len + RTRANS_HDR_LEN + 1){
+        //printf("[rt] waiting for buffer to clear\n");
         mutex_lock(&rt_state.tx_mutex);
         mutex_lock(&rt_state.tx_mutex);
         mutex_unlock(&rt_state.tx_mutex);
+        //printf("[rt] proceeding\n");
      }
-     
-     unsigned state = disableIRQ();
      
      // add to ringbuffer
      if(ringbuffer_add(&rt_state.tx_ringbuffer, (char*) buffer, len + RTRANS_HDR_LEN + 1) != len + RTRANS_HDR_LEN + 1){
         printf("[rt] error: tx buffer overflow\n");
      }
-     
-     restoreIRQ(state);
      
      // wake tx thread
      msg_send_int(&m, rt_state.tx_pid);
@@ -210,7 +212,7 @@ void *rt_tx_loop(void *arg){
                     rt_state.tx_success = RTRANS_TX_FAILURE;
                     break;
                 }
-                
+            
                 // transmit packet
                 rt_state.tx_func(buffer, RTRANS_HDR_LEN + pbuf->hdr.len + 1, pbuf->hdr.master);
             
@@ -228,22 +230,20 @@ void *rt_tx_loop(void *arg){
             if(rt_state.tx_success == RTRANS_TX_FAILURE){
                 uint8_t count = 0;
                 printf("[rt] pkg %d seg %d failed to transmit\n", rt_state.tx_wait_pkg, rt_state.tx_wait_seq);
-                state = disableIRQ();
                 ringbuffer_peek(rb, buffer, RTRANS_HDR_LEN);
-                restoreIRQ(state);
                 while(rb->avail > RTRANS_HDR_LEN && pbuf->hdr.pkg_no == rt_state.tx_wait_pkg){
                     state = disableIRQ();
                     ringbuffer_get(rb, buffer, RTRANS_HDR_LEN + pbuf->hdr.len + 1);
                     ringbuffer_peek(rb, buffer, RTRANS_HDR_LEN);
                     restoreIRQ(state);
+                    mutex_unlock(&rt_state.tx_mutex);
                     count++;
                 }
                 printf("[rt] removed %d additional segments\n", count);
             }
             
-            // notify other threads that ringbuffer is no longer full
-            mutex_unlock(&rt_state.tx_mutex);
         }
+         
     }
     return 0;
 }
@@ -268,11 +268,9 @@ void rt_incoming(char *payload, uint8_t len){
         case RTRANS_TYPE_SET:   {
             msg_t m;
             m.type = 0;
-            unsigned state = disableIRQ();
             if(ringbuffer_add(&rt_state.cb_ringbuffer, (char*) pbuf, pbuf->hdr.len + RTRANS_HDR_LEN + 1) != pbuf->hdr.len + RTRANS_HDR_LEN + 1){
                 printf("[rt] error: rx buffer overflow\n");
             }
-            restoreIRQ(state);
             msg_send_int(&m, rt_state.cb_pid);
             break;
         }
