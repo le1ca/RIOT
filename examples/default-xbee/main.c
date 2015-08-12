@@ -16,7 +16,7 @@
 uint16_t mypan, myaddr;
 joseta_df_t joseta_last_minute[60];
 char abuf1[APP_PKT_BUFFER_SIZE], abuf2[APP_PKT_BUFFER_SIZE];
-bool joseta_fresh = false;
+bool joseta_fresh = false, master_set = false;
 
 char     *ja_names[] = {"occupan", "relay", "voltage", "current", "phase","tempera","timesta"};
 uint8_t   ja_types[] = {RA_FMT_u8, RA_FMT_u8, RA_FMT_u16, RA_FMT_u16, RA_FMT_u16, RA_FMT_u8, RA_FMT_u32};
@@ -38,20 +38,27 @@ void xbee_tx(char *buf, unsigned int len, uint16_t addr){
 	
 	char temp[100];
 	memcpy(temp, buf, len);
+	
+	printf("[xbee] calling send()\n");
 
-	xbee_radio_driver.send(PACKET_KIND_DATA,
+	radio_tx_status_t status = xbee_radio_driver.send(PACKET_KIND_DATA,
 						   dest,
 						   false,
 						   true,
 						   (void*) temp,
 						   len
 	);
+	
+	printf("[xbee] tx %d bytes to %04x\n", len, dest);
+	printf("       result: %d\n", status);
 }
 
 void xbee_rx(void *buf, unsigned int len, int8_t rssi, uint8_t lqi, bool crc_ok){
 
 	char temp[100];
 	memcpy(temp, buf, len);
+	
+	printf("[xbee] rx %d bytes (rssi %d)\n", len, rssi);
 	
 	// pass to driver
 	rt_incoming(temp, len);
@@ -77,8 +84,11 @@ void incoming_packet(radio_trans_pkt* packet){
     switch(packet->hdr.type){
         case RTRANS_TYPE_PROBE:{
             printf("[rt] incoming probe from %04x\n", packet->hdr.master);
-            rt_set_master(packet->hdr.master);
-            rt_transmit(RTRANS_TYPE_JOIN, 0, 0);
+            if(!master_set){
+                    rt_set_master(packet->hdr.master);
+                    rt_transmit(RTRANS_TYPE_JOIN, 0, 0);
+                    master_set = true;
+            }
             break;
         }
         case RTRANS_TYPE_POLL:{
@@ -99,7 +109,7 @@ void incoming_packet(radio_trans_pkt* packet){
                 uint16_t plen = app_build_pkt(abuf2, APP_PKT_BUFFER_SIZE, 60, 7, ja_names, (void *) abuf1, offset);
                 printf("[ra] constructed packet of size %u\n", plen);
                 rt_transmit(RTRANS_TYPE_DATA, abuf2, plen);
-                joseta_fresh = false;
+                //joseta_fresh = false;
             }
             else{
                 rt_transmit(RTRANS_TYPE_DATA, 0, 0);

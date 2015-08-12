@@ -158,11 +158,13 @@ void rt_add_pkt(uint8_t type, uint8_t pkg_no, uint8_t seq_no, uint8_t seg_ct, ch
      
      // wait for sufficient space in ringbuffer: payload + header + checksum
      while(RB_FREE_SPACE(rt_state.tx_ringbuffer) < len + RTRANS_HDR_LEN + 1){
-        //printf("[rt] waiting for buffer to clear\n");
+        printf("[rt] waiting for buffer to clear\n");
+        msg_send_int(&m, rt_state.tx_pid);
         mutex_lock(&rt_state.tx_mutex);
+        msg_send_int(&m, rt_state.tx_pid);
         mutex_lock(&rt_state.tx_mutex);
         mutex_unlock(&rt_state.tx_mutex);
-        //printf("[rt] proceeding\n");
+        printf("[rt] proceeding\n");
      }
      
      // add to ringbuffer
@@ -223,7 +225,6 @@ void *rt_tx_loop(void *arg){
                 mutex_lock(&rt_state.retx_mutex);
                 mutex_lock(&rt_state.retx_mutex);
                 mutex_unlock(&rt_state.retx_mutex);
-                
             }
             
             // cancel the package if tx failed
@@ -236,11 +237,12 @@ void *rt_tx_loop(void *arg){
                     ringbuffer_get(rb, buffer, RTRANS_HDR_LEN + pbuf->hdr.len + 1);
                     ringbuffer_peek(rb, buffer, RTRANS_HDR_LEN);
                     restoreIRQ(state);
-                    mutex_unlock(&rt_state.tx_mutex);
                     count++;
                 }
                 printf("[rt] removed %d additional segments\n", count);
             }
+            
+            mutex_unlock(&rt_state.tx_mutex);
             
         }
          
