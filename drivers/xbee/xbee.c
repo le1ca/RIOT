@@ -27,7 +27,6 @@
 /* lower-level drivers needed to control the XBee module */
 #include "periph/uart.h"
 #include "periph/gpio.h"
-#include "driverlib/rom.h"
 
 /* hardware-dependent configuration */
 #include "xbee-config.h"
@@ -38,7 +37,7 @@
 #define XBEE_RECV_BUF_SIZE    128
 #define XBEE_PACKET_BUF_COUNT 8
 #define XBEE_PACKET_BUF_SIZE  (XBEE_PACKET_BUF_COUNT * sizeof(xbee_incoming_packet_t))
-#define XBEE_STACKSIZE 		  1024
+#define XBEE_STACKSIZE        1024
 
 typedef enum xbee_at_cmd_response_kind {
     XBEE_AT_CMD_OK = 0,        /* success */
@@ -94,7 +93,6 @@ typedef struct xbee_incoming_packet {
 /*****************************************************************************/
 
 /* callback function to upper layers for RXed packets */
-static receive_802154_packet_callback_t rx_callback;
 
 /* next ID for sent frames */
 static uint8_t frame_id;
@@ -108,6 +106,7 @@ static xbee_at_cmd_response_t latest_at_response;
 /* TX status response management data */
 static struct mutex_t mutex_wait_tx_status;
 static xbee_tx_status_report_t latest_tx_report;
+static uint8_t xbee_tx_status_wait_frame;
 
 #ifndef core_panic
 #define core_panic(code, string) {\
@@ -120,7 +119,6 @@ static xbee_tx_status_report_t latest_tx_report;
 /* send a character, via UART, to the XBee module */
 static void send_xbee(const uint8_t c)
 {
-	//printf("[xbee] sending byte: 0x%02x\n", c);
     int res = uart_write_blocking(XBEE_UART_LINK, c);
     if (res < 0) {
         core_panic(0x0bee,
@@ -202,6 +200,8 @@ static void xbee_process_AT_command_response(uint8_t st,
 static void xbee_process_tx_status(uint8_t st,
                                    uint8_t fnum)
 {
+    puts("[xbee] got tx status");
+    //unsigned state = disableIRQ();
     switch (st) {
     case XBEE_TX_SUCCESS:
     case XBEE_TX_NOACK:
@@ -211,12 +211,14 @@ static void xbee_process_tx_status(uint8_t st,
         latest_tx_report.frame_num = fnum;
         /* flag the info arrival for do_send() function */
         mutex_unlock(&mutex_wait_tx_status);
+        puts("[xbee] unlocked tx status mutex");
         break;
     default:
         /* other/unknown error */
         core_panic(0x0bee,
                    "Unexpected error when TXing packet to XBee");
     }
+    //restoreIRQ(state);
 }
 
 #define INC_CKSUM(x)   (sum = (sum + (x)) & 0xff)
@@ -259,9 +261,7 @@ static xbee_at_cmd_response_t xbee_send_AT_command(unsigned int len,
     for (int i = 0; i < len; i++) {
         buf[i + 1] = str[i];
     }
-    //printf("[xbee] sending command (frame id %d)\n", buf[0]);
     xbee_send_API_command(0x08, len + 1, buf);
-    //printf("[xbee] waiting\n");
     /* wait for response */
     mutex_lock(&mutex_wait_at_reponse);
     mutex_lock(&mutex_wait_at_reponse);
@@ -303,7 +303,7 @@ void *xbee_pkt_thread_entry(void* arg){
             unsigned state = disableIRQ();
             ringbuffer_get(rb, (char*) &p, sizeof(xbee_incoming_packet_t));
             restoreIRQ(state);
-			rx_callback(p.buf, p.len, p.rssi, p.lqi, p.crc_ok);
+	    rx_callback(p.buf, p.len, p.rssi, p.lqi, p.crc_ok);
         }  
     }
 }
@@ -444,10 +444,10 @@ static void xbee_read_til_cr(void){
  */
 void xbee_incoming_char(char c)
 {
-	//printf("[xbee] incoming: 0x%02x\n", c);
     uint8_t in = (uint8_t) c;
     uint16_t cmd;
     uint32_t param;
+    unsigned state;
     switch (recv_fsm_state) {
     case RECV_FSM_OK0:
     	if(c == 'O')
@@ -465,7 +465,6 @@ void xbee_incoming_char(char c)
         if (in == 0x7e) {
             /* a new packet is beginning to arrive: wait for its size */
             recv_fsm_state = RECV_FSM_SIZE1;
-            //printf("[xbee] new packet incoming\n");
         }
         break;
     case RECV_FSM_SIZE1:
@@ -475,14 +474,12 @@ void xbee_incoming_char(char c)
     case RECV_FSM_SIZE2:
         expect_data_len |= in;
         /* we now wait for the payload of the packet */
-        //printf("[xbee] waiting for %d bytes\n", expect_data_len);
         recv_fsm_state = RECV_FSM_PACKET_INCOMPLETE;
         recv_data_len = 0;
         cksum = 0;
         break;
     case RECV_FSM_PACKET_INCOMPLETE:
         /* a new byte of payload has arrived */
-        //printf("[xbee] got byte 0x%02x\n", in);
         recv_buf[recv_data_len] = in;
         recv_data_len++;
         cksum = (cksum + in) & 0xff;
@@ -501,7 +498,6 @@ void xbee_incoming_char(char c)
             recv_fsm_state = RECV_FSM_IDLE;
             return;
         }
-        //printf("[xbee] got frame from uart, type %02x\n", recv_buf[0]);
         
         ieee802154_node_addr_t src_node;
         /* process the verified payload, according to its API type */
@@ -523,10 +519,10 @@ void xbee_incoming_char(char c)
 	                                             param);
 	            break;
 	        case 0x89:
-	        	//printf("[xbee] xbee reports tx status: %02x %02x\n", recv_buf[2], recv_buf[1]);
-	            xbee_process_tx_status(recv_buf[2],
-	                                   recv_buf[1]);
-	            break;
+                    xbee_process_tx_status(recv_buf[2],
+                                           recv_buf[1]);
+                    }
+                    break;
 	        case 0x80:
 	        case 0x82:
 	            src_node.long_addr = ((uint64_t)recv_buf[1] << 56)
@@ -565,7 +561,6 @@ void xbee_incoming_char(char c)
 	    //break;
 	    recv_data_len = 0;
 	    recv_fsm_state = RECV_FSM_IDLE;
-	    //printf("[xbee] processed incoming data\n");
 	    DEBUG("Received and processed packet from XBee module.\n");
 	}
 }
@@ -703,6 +698,7 @@ radio_tx_status_t xbee_load_tx_buf(ieee802154_packet_kind_t kind,
        without sending... :( */
     core_panic(0x0bee,
                "Cannot load TX buf without sending with XBee modules");
+    return 0;
 }
 
 radio_tx_status_t xbee_transmit_tx_buf(void)
@@ -711,6 +707,7 @@ radio_tx_status_t xbee_transmit_tx_buf(void)
        a previously loaded TX buffer... :( */
     core_panic(0x0bee,
                "Cannot transmit TX buf without loading with XBee modules");
+    return 0;
 }
 
 radio_tx_status_t xbee_do_send(ieee802154_packet_kind_t kind,
@@ -783,14 +780,10 @@ radio_tx_status_t xbee_do_send(ieee802154_packet_kind_t kind,
     sum = 0xff - sum;
     send_xbee(sum);
     
-    //printf("[xbee] waiting for tx status, current FSM = %d\n", recv_fsm_state);
-
     /* wait for TX status response */
     mutex_lock(&mutex_wait_tx_status);
     mutex_lock(&mutex_wait_tx_status);
     mutex_unlock(&mutex_wait_tx_status); // release lock once status is here
-
-	//printf("[xbee] got tx status, current FSM = %d\n", recv_fsm_state);
 
     /* ensure status received is for TXed packet */
     if (latest_tx_report.frame_num != frame_id) {
@@ -798,7 +791,11 @@ radio_tx_status_t xbee_do_send(ieee802154_packet_kind_t kind,
         core_panic(0x0bee,
                    "TX status doesn't correspond to sent packet");
     }
-    frame_id++;
+    
+    /* increment frame id. increment again if it is zero */
+    if(++frame_id == 0)
+        ++frame_id;
+        
     /* return status for the TXed packet */
     switch (latest_tx_report.status) {
     case XBEE_TX_SUCCESS:
@@ -986,6 +983,7 @@ int xbee_get_tx_power(void)
     default:
         core_panic(0x0bee,
                    "bad answer from ATPL command from XBee modem");
+        return 0;
     }
 }
 
