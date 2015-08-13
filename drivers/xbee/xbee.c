@@ -27,6 +27,7 @@
 /* lower-level drivers needed to control the XBee module */
 #include "periph/uart.h"
 #include "periph/gpio.h"
+#include "driverlib/rom.h"
 
 /* hardware-dependent configuration */
 #include "xbee-config.h"
@@ -93,6 +94,7 @@ typedef struct xbee_incoming_packet {
 /*****************************************************************************/
 
 /* callback function to upper layers for RXed packets */
+static receive_802154_packet_callback_t rx_callback;
 
 /* next ID for sent frames */
 static uint8_t frame_id;
@@ -106,7 +108,6 @@ static xbee_at_cmd_response_t latest_at_response;
 /* TX status response management data */
 static struct mutex_t mutex_wait_tx_status;
 static xbee_tx_status_report_t latest_tx_report;
-static uint8_t xbee_tx_status_wait_frame;
 
 #ifndef core_panic
 #define core_panic(code, string) {\
@@ -447,7 +448,6 @@ void xbee_incoming_char(char c)
     uint8_t in = (uint8_t) c;
     uint16_t cmd;
     uint32_t param;
-    unsigned state;
     switch (recv_fsm_state) {
     case RECV_FSM_OK0:
     	if(c == 'O')
@@ -521,7 +521,6 @@ void xbee_incoming_char(char c)
 	        case 0x89:
                     xbee_process_tx_status(recv_buf[2],
                                            recv_buf[1]);
-                    }
                     break;
 	        case 0x80:
 	        case 0x82:
@@ -799,12 +798,16 @@ radio_tx_status_t xbee_do_send(ieee802154_packet_kind_t kind,
     /* return status for the TXed packet */
     switch (latest_tx_report.status) {
     case XBEE_TX_SUCCESS:
+        printf("[xbee] tx_success\n");
         return RADIO_TX_OK;
     case XBEE_TX_NOACK:
+        printf("[xbee] tx_noack\n");
         return RADIO_TX_NOACK;
     case XBEE_TX_MEDIUM_BUSY:
+        printf("[xbee] tx_medium_busy\n");
         return RADIO_TX_MEDIUM_BUSY;
     default:
+        printf("[xbee] tx_error\n");
         return RADIO_TX_ERROR;
     }
 }
