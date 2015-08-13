@@ -319,10 +319,22 @@ void joseta_uart_byte(char c){
     
 }
 
+uint16_t joseta_calc_crc(uint8_t* data_p, uint8_t length){
+        uint8_t x;
+        uint16_t crc = 0; //0xFFFF;
+        while (length--){
+                x = crc >> 8 ^ *data_p++;
+                x ^= x>>4;
+                crc = (crc << 8) ^ ((uint16_t)(x << 12)) ^ ((uint16_t)(x <<5)) ^ ((uint16_t)x);
+        }
+        return crc;
+}
+
 /* check crc from buffered data */
 bool joseta_verify_crc(void){
-    /* TODO */
-    return true;
+    joseta_raw_frame_t *frame = (joseta_raw_frame_t*) joseta_state.current_frame;
+    uint16_t my_crc = joseta_calc_crc((uint8_t *) frame, JOSETA_RAW_FRAME_SIZE - 2);
+    return (my_crc == frame->crc);
 }
 
 /* process current buffered frame */
@@ -335,6 +347,21 @@ void joseta_process_frame(void){
         printf("[joseta] discarding frame with bad crc\n");
     }
     else{
+        printf("[joseta] raw frame: ");
+        for(int i = 0; i < JOSETA_RAW_FRAME_SIZE; i++){
+                printf("%02x ", joseta_state.current_frame[i]);
+        }
+        printf("\n                    flags=%02x, voltage=%u, current=%u, phase=%u, temp=%u, time=%lu, id=%u, err=%u, crc=%04x\n",
+        	frame->flags,
+                frame->voltage,
+        	frame->current,
+        	frame->phase,
+        	frame->temperature,
+        	frame->timestamp,
+        	frame->id,
+        	frame->error,
+        	frame->crc
+	);
     
         /* parse frame */
         parsed.occupancy = frame->flags & JOSETA_FLAG_OCCUPANCY;
