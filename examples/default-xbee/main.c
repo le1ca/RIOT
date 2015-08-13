@@ -67,14 +67,17 @@ void xbee_rx(void *buf, unsigned int len, int8_t rssi, uint8_t lqi, bool crc_ok)
 
 void j_callback(unsigned int type, joseta_df_t *buf, unsigned int num_records){
     if(type == JOSETA_CB_PURGE){
-        //for(unsigned i = 0; i < num_records; i++)
-        //    printf("[joseta] time=%lu, voltage=%u, curent=%u, temp=%d\n",
-        //            (unsigned long) buf[i].time,
-        //            (unsigned) buf[i].voltage,
-        //            (unsigned) buf[i].current,
-        //            (unsigned) buf[i].temp
-        //    );
-        //printf("[joseta] purged %d records\n", num_records);
+        for(unsigned i = 0; i < num_records; i++)
+            printf("[joseta] time=%lu, occ=%u, rel=%u, voltage=%u, current=%u, phase=%u, temp=%u\n",
+                    (unsigned long) buf[i].time,
+                    (unsigned) buf[i].occupancy,
+                    (unsigned) buf[i].relay,
+                    (unsigned) buf[i].voltage,
+                    (unsigned) buf[i].current,
+                    (unsigned) buf[i].phase,
+                    (unsigned) buf[i].temp
+            );
+        printf("[joseta] purged %d records\n", num_records);
         memcpy(joseta_last_minute, buf, sizeof(joseta_df_t) * num_records);
         joseta_fresh = true;
     }
