@@ -44,7 +44,7 @@
 #define RTRANS_TX_FAILURE 2 // got nack or timed out
 
 /* max number of retx */
-#define RTRANS_MAX_RETRY 8
+#define RTRANS_MAX_RETRY 4
 
 /* total packet size */
 #define RTRANS_MAX_PKT_LEN (100)
