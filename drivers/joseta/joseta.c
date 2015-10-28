@@ -162,13 +162,15 @@ void *joseta_callback_loop(void *arg){
         msg_receive(&m);
         
         switch(m.type){
-        
+            
+            // can eventually get rid of
             case JOSETA_CB_TIMER: {
                 printf("[joseta] event: 1-minute timer expired\n");
                 joseta_request_minute();
                 break;
             }
             
+            // not supposed to happen
             case JOSETA_CB_RESET: {
                 printf("[joseta] event: initiate reset\n");
                 joseta_state.pending_reset = true;
@@ -176,6 +178,7 @@ void *joseta_callback_loop(void *arg){
                 break;
             }
         
+            // packet callback
             case JOSETA_CB_FRAME: {
                 //printf("[joseta] event: processed frame\n");
                 if(joseta_state.callback &&
@@ -191,6 +194,7 @@ void *joseta_callback_loop(void *arg){
                 break;
             }
             
+            // chunk callback
             case JOSETA_CB_PURGE: {
                 printf("[joseta] event: purge\n");
                 joseta_df_t p[JOSETA_BUFFER_COUNT];
@@ -334,7 +338,15 @@ uint16_t joseta_calc_crc(uint8_t* data_p, uint8_t length){
 bool joseta_verify_crc(void){
     joseta_raw_frame_t *frame = (joseta_raw_frame_t*) joseta_state.current_frame;
     uint16_t my_crc = joseta_calc_crc((uint8_t *) frame, JOSETA_RAW_FRAME_SIZE - 2);
-    return (my_crc == frame->crc);
+    //return (my_crc == frame->crc);
+	if (my_crc == frame->crc) {
+		printf("\nCRC succeeded!\n");
+	} else {
+        printf("\nCRC failed ya dummy!\n");
+        printf("TI CRC = %d\n", my_crc);
+        printf("Python CRC = %d\n", frame->crc); 
+    }
+	return true;
 }
 
 /* process current buffered frame */
