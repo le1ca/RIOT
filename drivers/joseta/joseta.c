@@ -255,28 +255,29 @@ void joseta_serial_recv(void *arg, char c){
     msg_send_int(&m, joseta_state.serial_pid);
 }
 
+bool is_start_byte(char c) {
+    // in function form in case we choose to change the start byte constant
+    // (candidate for later refactor)
+    return c == 0xFF;
+}
+
 /* process buffered character */
 void joseta_uart_byte(char c){
 
-    joseta_state.current_frame[joseta_state.current_frame_idx++] = c;
-            
-    //printf("%u ", c);
-            
+    if (joseta_state.current_frame_idx != 0 || is_start_byte(c)) {
+        joseta_state.current_frame[joseta_state.current_frame_idx++] = c;
+    } else {
+        // wayward byte (there is not currently a frame being recorded, and it's not a start byte)
+        // discard
+    }
+
     /* if frame complete */
     if(joseta_state.current_frame_idx == JOSETA_RAW_FRAME_SIZE){
-        
-        //printf("\n");
         
         /* reset counter */
         joseta_state.current_frame_idx = 0;
         
         switch(joseta_state.fsm){
-            
-            /* if we are idle, we were not expecting data */
-            case JOSETA_FSM_IDLE: {
-                printf("[joseta] received unexpected data frame, discarding\n");
-                break;
-            }
             
             /* data frame was expected */
             case JOSETA_FSM_READ: {
@@ -284,22 +285,9 @@ void joseta_uart_byte(char c){
                 /* process this frame */
                 //printf("[joseta] recv frame\n");
                 joseta_process_frame();
-                
-                /* decrement number of frames we are expecting, check if done */
-                if((--joseta_state.expected_frames) == 0){
-                    if(joseta_state.pending_reset){
-                        joseta_state.fsm = JOSETA_FSM_INIT;
-                        joseta_send_reset();
-                        joseta_state.pending_reset = false;
-                    }
-                    else{
-                        joseta_state.fsm = JOSETA_FSM_IDLE;
-                        printf("[joseta] got all expected frames\n");
-                    }
-                }
-                else{
-                    //printf("[joseta] expecting %d more frames\n", joseta_state.expected_frames);
-                }
+
+                // TODO: handle joseta_state.pending_reset
+                // Previously, if there was a pending reset, this waited until all the frames were in to reset
                 
                 break;
             }
@@ -308,7 +296,7 @@ void joseta_uart_byte(char c){
             case JOSETA_FSM_INIT: {
                 printf("[joseta] board has reset, setting new epoch\n");
                 joseta_finish_init();
-                joseta_state.fsm = JOSETA_FSM_IDLE;
+                joseta_state.fsm = JOSETA_FSM_READ;
                 break;
             }
             
@@ -320,7 +308,6 @@ void joseta_uart_byte(char c){
             
         }        
     }
-    
 }
 
 uint16_t joseta_calc_crc(uint8_t* data_p, uint8_t length){
@@ -338,15 +325,15 @@ uint16_t joseta_calc_crc(uint8_t* data_p, uint8_t length){
 bool joseta_verify_crc(void){
     joseta_raw_frame_t *frame = (joseta_raw_frame_t*) joseta_state.current_frame;
     uint16_t my_crc = joseta_calc_crc((uint8_t *) frame, JOSETA_RAW_FRAME_SIZE - 2);
-    //return (my_crc == frame->crc);
-	if (my_crc == frame->crc) {
-		printf("\nCRC succeeded!\n");
-	} else {
+    /*if (my_crc == frame->crc) {
+	    printf("\nCRC succeeded!\n");
+    } else {
         printf("\nCRC failed ya dummy!\n");
         printf("TI CRC = %d\n", my_crc);
         printf("Python CRC = %d\n", frame->crc); 
     }
-	return true;
+    return true;*/
+    return (my_crc == frame->crc);
 }
 
 /* process current buffered frame */
@@ -363,17 +350,17 @@ void joseta_process_frame(void){
         for(int i = 0; i < JOSETA_RAW_FRAME_SIZE; i++){
                 printf("%02x ", joseta_state.current_frame[i]);
         }
-        printf("\n                    flags=%02x, voltage=%u, current=%u, phase=%u, temp=%u, time=%lu, id=%u, err=%u, crc=%04x\n",
-        	frame->flags,
-                frame->voltage,
-        	frame->current,
-        	frame->phase,
-        	frame->temperature,
-        	frame->timestamp,
-        	frame->id,
-        	frame->error,
-        	frame->crc
-	);
+        printf("\n                    start=%02x, flags=%02x, voltage=%u, current=%u, phase=%u, temp=%u, time=%lu, err=%u, crc=%04x\n",
+            frame->start,
+            frame->flags,
+            frame->voltage,
+            frame->current,
+            frame->phase,
+            frame->temperature,
+            frame->timestamp,
+            frame->error,
+            frame->crc
+    );
     
         /* parse frame */
         parsed.occupancy = frame->flags & JOSETA_FLAG_OCCUPANCY;
@@ -460,10 +447,6 @@ void joseta_timer_cb(int arg){
             if((joseta_state.rtc - joseta_state.epoch) % 86400 == 0){
                 msg_send(&m, joseta_state.callback_pid);
                 m.type = JOSETA_CB_RESET;
-            }
-            else if((joseta_state.rtc - joseta_state.epoch) % 60 == 5){
-                m.type = JOSETA_CB_TIMER;
-                msg_send(&m, joseta_state.callback_pid);
             }
         }
     }
