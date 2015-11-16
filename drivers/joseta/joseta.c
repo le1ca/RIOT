@@ -4,6 +4,10 @@
 // GLOBAL VARIABLES ////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
+static const char START_BYTE = 0xFF;
+static const char ESCAPE_BYTE = 0xFE;
+static int inside_escape = 0;  // set to 1 immediately after encountering an escape character, 0 otherwise
+
 /* buffers */
 static char joseta_serial_buffer[JOSETA_UART_BUF];
 static char joseta_frame_buffer[JOSETA_BUFFER_SIZE];
@@ -255,21 +259,27 @@ void joseta_serial_recv(void *arg, char c){
     msg_send_int(&m, joseta_state.serial_pid);
 }
 
-bool is_start_byte(char c) {
-    // in function form in case we choose to change the start byte constant
-    // (candidate for later refactor)
-    return c == 0xFF;
+/* wrapper around char processor that handles special circumstances */
+void joseta_uart_byte(char c) {
+    if (inside_escape == 1) {
+        inside_escape = 0;
+        joseta_process_byte(c);
+    } else if (c == ESCAPE_BYTE) {
+        inside_escape = 1;
+    } else if (c == START_BYTE) {
+        if (joseta_state.current_frame_idx == 0) {
+            // nothing - this is a legitimate way to start a frame
+        } else {
+            // unescaped start byte received in the middle of a frame - discard what we have and start over
+            joseta_state.current_frame_idx = 0
+        }
+    }
 }
 
 /* process buffered character */
 void joseta_uart_byte(char c){
 
-    if (joseta_state.current_frame_idx != 0 || is_start_byte(c)) {
-        joseta_state.current_frame[joseta_state.current_frame_idx++] = c;
-    } else {
-        // wayward byte (there is not currently a frame being recorded, and it's not a start byte)
-        // discard
-    }
+    joseta_state.current_frame[joseta_state.current_frame_idx++] = c;
 
     /* if frame complete */
     if(joseta_state.current_frame_idx == JOSETA_RAW_FRAME_SIZE){
