@@ -277,7 +277,7 @@ void joseta_uart_byte(char c) {
 }
 
 /* process buffered character */
-void joseta_uart_byte(char c){
+void joseta_process_byte(char c){
 
     joseta_state.current_frame[joseta_state.current_frame_idx++] = c;
 
@@ -461,3 +461,16 @@ void joseta_timer_cb(int arg){
         }
     }
 }
+
+void joseta_send_enable_streaming(void){
+    joseta_send_frame(0x5, 128);  // flag is 1 for disable, rate is 0 for unchanged
+}
+
+void joseta_send_disable_streaming(void){
+    joseta_send_frame(0x5, 0);  // flag is 0 for disable, rate is 0 for unchanged
+}
+
+void joseta_send_stream_rate(uint8_t seconds) {
+    joseta_send_frame(0x5, 128 | seconds); // flag is 1 for enable, rate is the value of seconds, with a max of 127.
+}
+    
