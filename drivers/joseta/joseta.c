@@ -19,6 +19,8 @@ joseta_state_t joseta_state;
 static char joseta_serial_thread_stack[JOSETA_SERIAL_STACK];
 static char joseta_callback_thread_stack[JOSETA_CALLBACK_STACK];
 
+void joseta_process_byte(char c);
+
 ////////////////////////////////////////////////////////////////////////////////
 // INITIALIZATION FUNCTIONS ////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -271,7 +273,7 @@ void joseta_uart_byte(char c) {
             // nothing - this is a legitimate way to start a frame
         } else {
             // unescaped start byte received in the middle of a frame - discard what we have and start over
-            joseta_state.current_frame_idx = 0
+            joseta_state.current_frame_idx = 0;
         }
     }
 }
