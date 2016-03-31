@@ -19,6 +19,8 @@ joseta_state_t joseta_state;
 static char joseta_serial_thread_stack[JOSETA_SERIAL_STACK];
 static char joseta_callback_thread_stack[JOSETA_CALLBACK_STACK];
 
+void joseta_process_byte(char c);
+
 ////////////////////////////////////////////////////////////////////////////////
 // INITIALIZATION FUNCTIONS ////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -127,6 +129,12 @@ void joseta_board_init(void){
 void joseta_finish_init(void){
     joseta_state.epoch = joseta_state.rtc;
     joseta_send_time(0);
+
+    // delay, 1 second ish
+    for (int i = 0; i < 12000000; i++);
+    
+    joseta_send_enable_streaming();
+    printf("sent enable stream command\n");
 }
 
 /* set cb function */
@@ -267,12 +275,19 @@ void joseta_uart_byte(char c) {
     } else if (c == ESCAPE_BYTE) {
         inside_escape = 1;
     } else if (c == START_BYTE) {
-        if (joseta_state.current_frame_idx == 0) {
-            // nothing - this is a legitimate way to start a frame
-        } else {
-            // unescaped start byte received in the middle of a frame - discard what we have and start over
-            joseta_state.current_frame_idx = 0
-        }
+        /*if (joseta_state.current_frame_idx != 15) {
+            printf("Got an incomplete byte; re-buffering\n");
+            printf("The amount of bytes buffered was %d\n", joseta_state.current_frame_idx);
+
+            printf("[joseta] raw frame: ");
+            for(int i = 0; i < joseta_state.current_frame_idx; i++){
+                printf("%02x ", joseta_state.current_frame[i]);
+            }
+            printf("\n");
+        }*/
+        joseta_state.current_frame_idx = 0;
+    } else {
+        joseta_process_byte(c);
     }
 }
 
@@ -283,7 +298,7 @@ void joseta_process_byte(char c){
 
     /* if frame complete */
     if(joseta_state.current_frame_idx == JOSETA_RAW_FRAME_SIZE){
-        
+
         /* reset counter */
         joseta_state.current_frame_idx = 0;
         
@@ -354,20 +369,23 @@ void joseta_process_frame(void){
     
     if(!joseta_verify_crc()){
         printf("[joseta] discarding frame with bad crc\n");
+        for(int i = 0; i < JOSETA_RAW_FRAME_SIZE; i++){
+                printf("%02x ", joseta_state.current_frame[i]);
+        }
     }
     else{
         printf("[joseta] raw frame: ");
         for(int i = 0; i < JOSETA_RAW_FRAME_SIZE; i++){
                 printf("%02x ", joseta_state.current_frame[i]);
         }
-        printf("\n                    start=%02x, flags=%02x, voltage=%u, current=%u, phase=%u, temp=%u, time=%lu, err=%u, crc=%04x\n",
-            frame->start,
+        printf("\n                    flags=%02x, voltage=%u, current=%u, phase=%d, temp=%u, time=%lu, reserved=%u, err=%u, crc=%04x\n",
             frame->flags,
             frame->voltage,
             frame->current,
             frame->phase,
             frame->temperature,
             frame->timestamp,
+            frame->reserved,
             frame->error,
             frame->crc
     );
