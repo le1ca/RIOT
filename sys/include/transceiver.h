@@ -186,6 +186,7 @@ extern "C" {
 #define TRANSCEIVER_NATIVE      (0x10)      /**< NATIVE transceivers */
 #define TRANSCEIVER_AT86RF231   (0x20)      /**< AT86RF231 transceivers */
 #define TRANSCEIVER_TI_EMAC     (0x40)
+#define TRANSCEIVER_XBEE     (0x80)
 /**
  * @}
  */
@@ -212,6 +213,7 @@ enum transceiver_msg_type_t {
     RCV_PKT_NATIVE,        /**< packet was received by native transceiver */
     RCV_PKT_AT86RF231,     /**< packet was received by AT86RF231 transceiver */
     RCV_PKT_TI_EMAC,
+    RCV_PKT_XBEE,
 
     /* Message types for transceiver <-> upper layer communication */
     PKT_PENDING,    /**< packet pending in transceiver buffer */

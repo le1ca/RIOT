@@ -39,7 +39,7 @@ USEMODULE += vtimer
 USEMODULE += defaulttransceiver
 USEMODULE += config
 
-FEATURES_OPTIONAL += transceiver
+USEMODULE += transceiver
 FEATURES_OPTIONAL += config
 FEATURES_OPTIONAL += periph_rtc
 
@@ -67,7 +67,9 @@ ifneq (,$(filter fox,$(BOARD)))
         USEMODULE += l3g4200d
 	USEMODULE += lsm303dlhc
 endif
-#ifneq (,$(filter ek-tm4c1294xl,$(BOARD)))
+ifneq (,$(filter ek-tm4c1294xl,$(BOARD)))
 #	USEMODULE += ti_emac
-#endif
+   USEMODULE += ti_xbee
+endif
+
 include $(RIOTBASE)/Makefile.include

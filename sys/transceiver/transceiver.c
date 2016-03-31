@@ -30,6 +30,10 @@
 #include "transceiver.h"
 
 /* supported transceivers */
+#ifdef MODULE_TI_XBEE
+#include "ti_xbee.h"
+#endif
+
 #ifdef MODULE_TI_EMAC
 #include "ti_emac.h"
 #endif
@@ -191,7 +195,8 @@ void transceiver_init(transceiver_type_t t)
     }
 
     /* check if a non defined bit is set */
-    if (t & ~(TRANSCEIVER_CC1100 | TRANSCEIVER_CC2420 | TRANSCEIVER_MC1322X | TRANSCEIVER_NATIVE | TRANSCEIVER_AT86RF231 | TRANSCEIVER_TI_EMAC)) {
+    if (t & ~(TRANSCEIVER_CC1100 | TRANSCEIVER_CC2420 | TRANSCEIVER_MC1322X | 
+        TRANSCEIVER_NATIVE | TRANSCEIVER_AT86RF231 | TRANSCEIVER_TI_EMAC | TRANSCEIVER_XBEE)) {
         puts("Invalid transceiver type");
     }
     else {
@@ -250,9 +255,15 @@ kernel_pid_t transceiver_start(void)
 
 #endif
 #ifdef MODULE_TI_EMAC
-	else if (transceivers & TRANSCEIVER_TI_EMAC){
+	else if (transceivers & TRANSCEIVER_TI_EMAC) {
 		ti_emac_init(transceiver_pid);
 	}
+
+#endif
+#ifdef MODULE_XBEE
+    else if (transceivers & TRANSCEIVER_XBEE) {
+        xbee_init(transceiver_pid);
+    }
 #endif
     return transceiver_pid;
 }
@@ -446,6 +457,10 @@ static void receive_packet(uint16_t type, uint8_t pos)
 			t = TRANSCEIVER_TI_EMAC;
 			break;
 
+        case RCV_PKT_XBEE:
+            t = TRANSCEIVER_XBEE;
+            break;
+
         default:
             t = TRANSCEIVER_NONE;
             break;
@@ -508,6 +523,13 @@ static void receive_packet(uint16_t type, uint8_t pos)
 #ifdef MODULE_TI_EMAC
 			ethernet_frame *trans_p = &(transceiver_buffer[transceiver_buffer_pos]);
 			receive_ti_emac_packet(trans_p);
+#endif
+        }
+        else if (type == RCV_PKT_XBEE){
+#ifdef MODULE_XBEE
+            // TODO: find if XBees actually receive a ieee(whatever) packet directly.
+            ieee802154_packet_t *trans_p = &(transceiver_buffer[transceiver_buffer_pos]);
+            receive_xbee_packet(trans_p); // TODO: implement receive_xbee_packet()
 #endif
         }
         else {
@@ -722,6 +744,30 @@ void receive_ti_emac_packet(ethernet_frame *trans_p)
 }
 #endif
 
+#ifdef MODULE_XBEE
+void receive_xbee_packet(ieee802154_packet_t *trans_p)
+{
+    // Issues: A) should I use dINT()/eINT() or disableIRQ()/restoreIRQ()
+
+    DEBUG("transceiver: Handling XBee packet\n");
+    /* disable interrupts while copying packet */
+    dINT();
+    cc110x_packet_t p = cc110x_rx_buffer[rx_buffer_pos].packet;
+
+    trans_p->src = p.phy_src;
+    trans_p->dst = p.address;
+    trans_p->rssi = cc110x_rx_buffer[rx_buffer_pos].rssi;
+    trans_p->lqi = cc110x_rx_buffer[rx_buffer_pos].lqi;
+    trans_p->length = p.length - CC1100_HEADER_LENGTH;
+    memcpy((void *) &(data_buffer[transceiver_buffer_pos * PAYLOAD_SIZE]), p.data, CC1100_MAX_DATA_LENGTH);
+    eINT();
+
+    trans_p->data = (uint8_t *) &(data_buffer[transceiver_buffer_pos * CC1100_MAX_DATA_LENGTH]);
+    DEBUG("transceiver: Packet %p (%p) was from %hu to %hu, size: %u\n", trans_p, trans_p->data, trans_p->src, trans_p->dst, trans_p->length);
+    // TODO: put something here, hopefully from Travis's xbee.c
+}
+#endif
+
 
 
 #ifdef MODULE_AT86RF231
@@ -779,7 +825,7 @@ void receive_at86rf231_packet(ieee802154_packet_t *trans_p)
 static int8_t send_packet(transceiver_type_t t, void *pkt)
 {
     int8_t res = -1;
-#if MODULE_AT86RF231 || MODULE_CC2420 || MODULE_MC1322X
+#if MODULE_AT86RF231 || MODULE_CC2420 || MODULE_MC1322X || MODULE_XBEE
     ieee802154_packet_t *p = (ieee802154_packet_t *)pkt;
     DEBUG("transceiver: Send packet to ");
 #if ENABLE_DEBUG
@@ -864,6 +910,11 @@ static int8_t send_packet(transceiver_type_t t, void *pkt)
 			res = ti_emac_send(p);
 			break;
 #endif
+#ifdef MODULE_XBEE
+        case TRANSCEIVER_XBEE:
+            res = xbee_send(p);  // TODO: figure out where to implement / include xbee_send()
+            break;
+#endif
 #ifdef MODULE_AT86RF231
 
         case TRANSCEIVER_AT86RF231:
@@ -925,6 +976,12 @@ static int32_t set_channel(transceiver_type_t t, void *channel)
 		case TRANSCEIVER_TI_EMAC:
 			return ti_emac_set_channel(c);
 #endif
+#ifdef MODULE_XBEE
+		case TRANSCEIVER_XBEE:
+            // xbee_set_channel() accepts an unsigned int, which I THINK should
+            // be equivalent to uint8_t behind the scenes.
+			return xbee_set_channel(c);
+#endif
 #ifdef MODULE_AT86RF231
 
         case TRANSCEIVER_AT86RF231:
@@ -974,6 +1031,12 @@ static int32_t get_channel(transceiver_type_t t)
 		case TRANSCEIVER_TI_EMAC:
 			return ti_emac_get_channel();
 #endif
+#ifdef MODULE_XBEE
+		case TRANSCEIVER_XBEE:
+            // Returns an unsigned int. Assume that it converts to uint(<=32)_t,
+            // which can be explicitly cast to int32_t
+			return (int32_t) xbee_get_channel();
+#endif
 #ifdef MODULE_AT86RF231
 
         case TRANSCEIVER_AT86RF231:
@@ -1019,6 +1082,12 @@ static int32_t set_pan(transceiver_type_t t, void *pan)
         case TRANSCEIVER_MC1322X:
             return maca_set_pan(c);
 #endif
+#ifdef MODULE_XBEE
+		case TRANSCEIVER_XBEE:
+            // int32_t can fit into uint16_t, right? Let's hope the extra
+            // precision is unnecessary
+			return xbee_set_pan((uint16_t) c);
+#endif
 
         default:
             /* get rid of compiler warning about unused variable */
@@ -1056,6 +1125,10 @@ static int32_t get_pan(transceiver_type_t t)
 
         case TRANSCEIVER_MC1322X:
             return maca_get_pan();
+#endif
+#ifdef MODULE_XBEE
+		case TRANSCEIVER_XBEE:
+			return (int32_t) xbee_get_pan();
 #endif
 
         default:
@@ -1101,6 +1174,11 @@ static radio_address_t get_address(transceiver_type_t t)
 #ifdef MODULE_TI_EMAC
 		case TRANSCEIVER_TI_EMAC:
 			return ti_emac_get_address();
+#endif
+#ifdef MODULE_XBEE
+		case TRANSCEIVER_XBEE:
+            // radio_address_t is an alias for uint16_t, how convenient!
+			return xbee_get_address();
 #endif
 #ifdef MODULE_AT86RF231
 
@@ -1157,6 +1235,10 @@ static radio_address_t set_address(transceiver_type_t t, void *address)
 		case TRANSCEIVER_TI_EMAC:
 			return ti_emac_set_address(addr);
 #endif
+#ifdef MODULE_XBEE
+		case TRANSCEIVER_XBEE:
+			return xbee_set_address(addr);
+#endif
 #ifdef MODULE_AT86RF231
 
         case TRANSCEIVER_AT86RF231:
@@ -1188,6 +1270,12 @@ static transceiver_eui64_t get_long_addr(transceiver_type_t t)
         case TRANSCEIVER_AT86RF231:
             return at86rf231_get_address_long();
 #endif
+#ifdef MODULE_XBEE
+
+        case TRANSCEIVER_XBEE:
+            // transceiver_eui64_t is an alias for uint64_t
+            return xbee_get_long_address();
+#endif
 
         default:
             return 0;
@@ -1217,6 +1305,11 @@ static transceiver_eui64_t set_long_addr(transceiver_type_t t, void *address)
         case TRANSCEIVER_AT86RF231:
             return at86rf231_set_address_long(addr);
 #endif
+#ifdef MODULE_XBEE:
+
+        case TRANSCEIVER_XBEE:
+            // Calling this sets a core panic. Maybe we shouldn't implement this?
+            return xbee_set_long_address(addr);
 
         default:
             (void) addr;
@@ -1256,6 +1349,10 @@ static void set_monitor(transceiver_type_t t, void *mode)
 #ifdef MODULE_TI_EMAC
 		case TRANSCEIVER_TI_EMAC:
 			ti_emac_set_monitor(*((uint8_t *) mode));
+#endif
+#ifdef MODULE_XBEE
+		case TRANSCEIVER_XBEE:
+			xbee_set_monitor(false);
 #endif
 #ifdef MODULE_AT86RF231
 
@@ -1307,7 +1404,11 @@ static void powerdown(transceiver_type_t t)
 			ti_emac_powerdown();
 			break;
 #endif
-
+#ifdef MODULE_XBEE
+		case TRANSCEIVER_XBEE:
+			xbee_off();  // TODO: implement
+			break;
+#endif
         default:
             break;
     }
@@ -1341,11 +1442,17 @@ static void switch_to_rx(transceiver_type_t t)
 			ti_emac_switch_to_rx();
 			break;
 #endif
+#ifdef MODULE_XBEE
+        case TRANSCEIVER_XBEE:
+            xbee_switch_to_rx();
+            break;
+#endif
 #ifdef MODULE_AT86RF231
 
         case TRANSCEIVER_AT86RF231:
             at86rf231_switch_to_rx();
 #endif
+
 
         default:
             break;

@@ -2,7 +2,7 @@
 APPLICATION = ccn-lite-client
 
 # If no BOARD is found in the environment, use this default:
-BOARD ?= native
+BOARD ?= ek-tm4c1294xl
 
 # This has to be the absolute path to the RIOT base directory:
 RIOTBASE ?= $(CURDIR)/../..
@@ -40,5 +40,10 @@ USEMODULE += defaulttransceiver
 USEMODULE += vtimer
 USEMODULE += ccn_lite
 USEMODULE += ccn_lite_client
+
+# I think this solves the transciever missing error
+# USEMODULE += ti_emac
+
+USEMODULE += xbee
 
 include $(RIOTBASE)/Makefile.include

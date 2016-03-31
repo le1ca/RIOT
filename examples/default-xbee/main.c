@@ -9,6 +9,7 @@
 #include "radio_driver.h"
 #include "radio_trans.h"
 #include "radio_app.h"
+#include "transceiver.h"
 #include "xbee.h"
 #include "joseta.h"
 
@@ -147,8 +148,12 @@ int main(void)
     (void) puts("Welcome to RIOT!");
     rt_init_driver(myaddr, xbee_tx, incoming_packet);
 
+    transceiver_init(TRANSCEIVER_XBEE);
+    transceiver_start();
+
     shell_init(&shell, NULL, UART0_BUFSIZE, shell_readc, shell_putchar);
 
     shell_run(&shell);
+
     return 0;
 }

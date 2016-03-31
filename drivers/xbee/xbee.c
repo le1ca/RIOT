@@ -109,6 +109,9 @@ static xbee_at_cmd_response_t latest_at_response;
 static struct mutex_t mutex_wait_tx_status;
 static xbee_tx_status_report_t latest_tx_report;
 
+/* pid (process ID I think?) assigned to the transceiver */
+static kernel_pid_t transceiver_pid;
+
 #ifndef core_panic
 #define core_panic(code, string) {\
 	printf("ERROR(0x%04x): %s\n", code, string); \
@@ -573,6 +576,13 @@ int xbee_tx_callback(void* arg){
  return 0;
 }
 
+/* Primary entry point, mostly a wrapper around xbee_initialize() */
+void xbee_init(kernel_pid_t tpid){
+    transceiver_pid = tpid;
+    printf("Transceiver PID: %d\n", transceiver_pid);
+    xbee_initialize();
+}
+
 void xbee_initialize(void)
 {
     int resi;
@@ -709,13 +719,78 @@ radio_tx_status_t xbee_transmit_tx_buf(void)
     return 0;
 }
 
-radio_tx_status_t xbee_do_send(ieee802154_packet_kind_t kind,
-                               ieee802154_node_addr_t dest,
+void xbee_send(ieee802154_packet_t pkt)
+{
+    // PAY ATTENTION! This function is where the magic happens. And it will also be a source
+    // of gnarly bugs, I'm sure. 
+
+    uint8_t *payload = pkt.frame.payload;
+
+    // Oh lordy I hope the frame types correspond to packet kinds
+    ieee802154_packet_kind_t kind;
+    switch (pkt.frame.fcf.frame_type) {
+        case ieee802154_frame_type_t.IEEE_802154_BEACON_FRAME:
+            kind = ieee802154_packet_kind_t.PACKET_KIND_BEACON;
+            break;
+        case ieee802154_frame_type_t.IEEE_802154_DATA_FRAME:
+            kind = ieee802154_packet_kind_t.PACKET_KIND_DATA;
+            break;
+        case ieee802154_frame_type_t.IEEE_802154_ACK_FRAME:
+            kind = ieee802154_packet_kind_t.PACKET_KIND_ACK;
+            break;
+        case ieee802154_frame_type_t.IEEE_802154_MAC_CMD_FRAME:
+            kind = ieee802154_packet_kind_t.PACKET_KIND_MAC_CMD;
+            break;
+        default:
+            kind = ieee802154_packet_kind_t.PACKET_KIND_INVALID;
+            break;
+    }
+
+    // Do we use a long address or not?
+    // Well we have a frame property of uint8_t dest_addr[8], so I think it's safe to say it's 64 bytes
+    // WARNING: come back and check to make sure the endian-ness is correct. I will assume little endian just because.
+    uint64_t long_addr = 0;
+    long_addr += pkt.frame.dest_addr[0];
+    long_addr += ((uint64_t) pkt.frame.dest_addr[1]) << 8;
+    long_addr += ((uint64_t) pkt.frame.dest_addr[2]) << 16;
+    long_addr += ((uint64_t) pkt.frame.dest_addr[3]) << 24;
+    long_addr += ((uint64_t) pkt.frame.dest_addr[4]) << 32;
+    long_addr += ((uint64_t) pkt.frame.dest_addr[5]) << 40;
+    long_addr += ((uint64_t) pkt.frame.dest_addr[6]) << 48;
+    long_addr += ((uint64_t) pkt.frame.dest_addr[7]) << 56;
+    ieee802154_node_addr_t dest;
+    dest.long_addr = long_addr;
+
+    // of course we are!
+    bool use_long_addr = true;
+
+    // umm...I assume this wants an ack. If you run into problems, perhaps see what the hell pkt.frame.fcf.ack_req is.
+    bool wants_ack = true;
+    
+    // Should we choose pkt.length, which includes the fcs (frame checking sequence), or 
+    // should we choose pkt.frame.payload_len, which doesn't?
+    // Picking the one without fcs for now. God forgive me.
+    unsigned int len = pkt.frame.payload_len;
+
+    radio_tx_status_t send_status = xbee_do_send(kind, dest, use_long_addr, payload, len);
+    
+    // Optional: make this return the number of bytes sent, instead; 0 simply means "no error".
+    // But it's this big headerized packetized bullshit thing, so what is the number of bytes that I report?
+    if (send_status == radio_tx_status_t.RADIO_TX_OK) {
+        return 0;
+    } else {
+        return -1;
+    }
+}
+
+radio_tx_status_t xbee_do_send(ieee802154_packet_kind_t kind,  // it's an enum
+                               ieee802154_node_addr_t dest,  // union to choose short or long address
                                bool use_long_addr,
                                bool wants_ack,
-                               void *buf,
+                               void *buf,  // could this be what I'm looking for? It's a string of bytes...hmmm...
                                unsigned int len)
 {
+    // Where are the packet contents?
     if (len > 100) {
         return RADIO_TX_PACKET_TOO_LONG;
     }
@@ -823,7 +898,7 @@ void xbee_switch_to_rx(void)
        so this function can only be a NOP */
 }
 
-void xbee_set_channel(unsigned int chan)
+int32_t xbee_set_channel(unsigned int chan)
 {
     uint8_t buf[4];
     buf[0] = 'C';
@@ -835,6 +910,7 @@ void xbee_set_channel(unsigned int chan)
         core_panic(0x0bee,
                    "failed to set RF channel on XBee modem");
     }
+    return 0;
 }
 
 unsigned int xbee_get_channel(void)
