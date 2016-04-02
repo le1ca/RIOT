@@ -30,6 +30,7 @@
  * XBee low-level radio driver definition.
  */
 extern const ieee802154_radio_driver_t xbee_radio_driver;
+extern ringbuffer_t xbee_pkt_ringbuffer;
 
 #endif /* __XBEE_H */
 /** @} */

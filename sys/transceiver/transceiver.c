@@ -24,6 +24,7 @@
 #include "thread.h"
 #include "msg.h"
 #include "irq.h"
+#include "ringbuffer.h"
 
 #include "radio/types.h"
 
@@ -91,10 +92,12 @@ transceiver_type_t transceivers = TRANSCEIVER_NONE;
 registered_t reg[TRANSCEIVER_MAX_REGISTERED];
 
 /* packet buffers */
-#if MODULE_AT86RF231 || MODULE_CC2420 || MODULE_MC1322X || MODULE_XBEE
+#if MODULE_AT86RF231 || MODULE_CC2420 || MODULE_MC1322X
 ieee802154_packet_t transceiver_buffer[TRANSCEIVER_BUFFER_SIZE];
 #elif MODULE_TI_EMAC
 ethernet_frame transceiver_buffer[TRANSCEIVER_BUFFER_SIZE];
+#elif MODULE_XBEE
+xbee_incoming_packet_t transceiver_buffer[TRANSCEIVER_BUFFER_SIZE];
 #else
 radio_packet_t transceiver_buffer[TRANSCEIVER_BUFFER_SIZE];
 #endif
@@ -147,6 +150,9 @@ void receive_at86rf231_packet(ieee802154_packet_t *trans_p);
 #endif
 #ifdef MODULE_TI_EMAC
 void receive_ti_emac_packet(ethernet_frame *trans_p);
+#endif
+#ifdef MODULE_XBEE
+void receive_xbee_packet(xbee_incoming_packet_t *trans_p);
 #endif
 static int8_t send_packet(transceiver_type_t t, void *pkt);
 static int32_t get_channel(transceiver_type_t t);
@@ -334,6 +340,9 @@ static void *run(void *arg)
             case RCV_PKT_NATIVE:
             case RCV_PKT_AT86RF231:
             case RCV_PKT_TI_EMAC:
+            case RCV_PKT_XBEE:
+                // So what is m? A message? I think the xbee (/other radios) driver sends
+                // a message to the transceiver. Oh, that's why we want the transceiver pid in xbee.c!
                 receive_packet(m.type, m.content.value);
                 break;
 
@@ -527,8 +536,8 @@ static void receive_packet(uint16_t type, uint8_t pos)
         }
         else if (type == RCV_PKT_XBEE){
 #ifdef MODULE_XBEE
-            // TODO: find if XBees actually receive a ieee(whatever) packet directly.
-            ieee802154_packet_t *trans_p = &(transceiver_buffer[transceiver_buffer_pos]);
+            // The content we want is at the front of xbee_pkt_ringbuffer.
+            xbee_incoming_packet_t *trans_p = &(transceiver_buffer[transceiver_buffer_pos]);  // Get the dest address in transceiver_buffer
             receive_xbee_packet(trans_p); // TODO: implement receive_xbee_packet()
 #endif
         }
@@ -745,26 +754,18 @@ void receive_ti_emac_packet(ethernet_frame *trans_p)
 #endif
 
 #ifdef MODULE_XBEE
-void receive_xbee_packet(ieee802154_packet_t *trans_p)
+void receive_xbee_packet(xbee_incoming_packet_t *trans_p)
 {
-    // Issues: A) should I use dINT()/eINT() or disableIRQ()/restoreIRQ()
+    // Issues: should I use dINT()/eINT() or disableIRQ()/restoreIRQ()
 
     DEBUG("transceiver: Handling XBee packet\n");
-    /* disable interrupts while copying packet */
-    dINT();
-    cc110x_packet_t p = cc110x_rx_buffer[rx_buffer_pos].packet;
+    unsigned state;
 
-    trans_p->src = p.phy_src;
-    trans_p->dst = p.address;
-    trans_p->rssi = cc110x_rx_buffer[rx_buffer_pos].rssi;
-    trans_p->lqi = cc110x_rx_buffer[rx_buffer_pos].lqi;
-    trans_p->length = p.length - CC1100_HEADER_LENGTH;
-    memcpy((void *) &(data_buffer[transceiver_buffer_pos * PAYLOAD_SIZE]), p.data, CC1100_MAX_DATA_LENGTH);
-    eINT();
-
-    trans_p->data = (uint8_t *) &(data_buffer[transceiver_buffer_pos * CC1100_MAX_DATA_LENGTH]);
-    DEBUG("transceiver: Packet %p (%p) was from %hu to %hu, size: %u\n", trans_p, trans_p->data, trans_p->src, trans_p->dst, trans_p->length);
-    // TODO: put something here, hopefully from Travis's xbee.c
+    // Atomic for some reason
+    state = disableIRQ();
+    // It's a char buffer so n is the number of bytes
+    ringbuffer_get(&xbee_pkt_ringbuffer, (char *) trans_p, sizeof(xbee_incoming_packet_t));
+    restoreIRQ(state);
 }
 #endif
 
@@ -838,6 +839,8 @@ static int8_t send_packet(transceiver_type_t t, void *pkt)
 #endif
 #elif MODULE_TI_EMAC
 	ethernet_frame *p = (ethernet_frame *) pkt;
+#elif MODULE_XBEE
+    xbee_incoming_packet_t *p = (xbee_incoming_packet_t *) pkt;
 #else
     radio_packet_t *p = (radio_packet_t *)pkt;
     DEBUG("transceiver: Send packet to %" PRIu16 "\n", p->dst);

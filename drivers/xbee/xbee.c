@@ -23,6 +23,7 @@
 #include "xbee.h"
 #include "crash.h"
 #include "mutex.h"
+#include "transceiver.h"
 
 /* lower-level drivers needed to control the XBee module */
 #include "periph/uart.h"
@@ -134,6 +135,9 @@ static void send_xbee(const uint8_t c)
 void xbee_pkt_handle_incoming(xbee_incoming_packet_t *p);
 
 /* handle the reception of a data packet from XBee modem */
+// called when the more basic xbee_incoming_char() finishes getting an entire packet.
+// which is in turn called by xbee_thread_entry(), which is referenced in xbee_thread_init(),
+// which is in xbee_initialize() and further the callback collection specified at the bottom.
 static void xbee_process_rx_packet(ieee802154_node_addr_t src_addr,
                                    bool use_long_addr,
                                    int8_t rssi,
@@ -141,14 +145,16 @@ static void xbee_process_rx_packet(ieee802154_node_addr_t src_addr,
                                    unsigned int len)
 {
     /* nothing more to do than relay to upper layers, if possible */
-    //if (rx_callback != NULL) {
-    //    /* Since we don't know LQI, we pass just 0;
-    //       packet validity is to be verified by the XBee modem,
-    //       so we assume CRC is always correct */
-    //    rx_callback(buf, len, rssi, 0, true);
-    //}
-    xbee_incoming_packet_t p;
-    memcpy(p.buf, buf, len);
+    if (rx_callback != NULL) {
+        /* Since we don't know LQI, we pass just 0;
+           packet validity is to be verified by the XBee modem,
+           so we assume CRC is always correct */
+        rx_callback(buf, len, rssi, 0, true);
+    }
+
+    
+    xbee_incoming_packet_t p;  // @@@@@ MAKE THIS THE GLOBAL BUFFER THING
+    memcpy(xbee_global_incoming_packet.buf, buf, len);
     p.len = len;
     p.rssi = rssi;
     p.lqi = 0;
@@ -327,11 +333,14 @@ void xbee_pkt_thread_init(void){
     thread_wakeup(pid);
 }
 
+
+// I don't think this actually gets called ever?
 void xbee_pkt_handle_incoming(xbee_incoming_packet_t *p){
     msg_t m;
-    m.type = 0;
+    m.type = (uint16_t)RCV_PKT_XBEE;
+    m.content.value = 0;  // It's a ringbuffer, so the head of the buffer is handled for us
     ringbuffer_add(&xbee_pkt_ringbuffer, (const char *) p, sizeof(xbee_incoming_packet_t));
-    msg_send_int(&m, xbee_pkt_handler_pid);
+    msg_send_int(&m, transceiver_pid);  // interrupt
 }
 
 /*****************************************************************************/
@@ -1089,7 +1098,8 @@ bool xbee_get_monitor(void)
 {
     /* XBee modems don't offer a monitor/promiscuous mode */
     return false;
-}
+
+
 
 
 /* XBee low-level radio driver definition */
