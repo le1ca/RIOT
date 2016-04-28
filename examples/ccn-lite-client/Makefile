@@ -37,6 +37,7 @@ USEMODULE += uart0
 USEMODULE += ps
 USEMODULE += random
 USEMODULE += defaulttransceiver
+USEMODULE += transceiver
 USEMODULE += vtimer
 USEMODULE += ccn_lite
 USEMODULE += ccn_lite_client

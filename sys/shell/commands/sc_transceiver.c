@@ -64,6 +64,11 @@
 #define TEXT_SIZE TI_EMAC_MAX_DATA_LENGTH
 #define _TC_TYPE TRANSCEIVER_TI_EMAC
 
+#elif defined( MODULE_XBEE )
+#include "xbee.h"
+#define TEXT_SIZE XBEE_MAX_PKT_DATA_LENGTH
+#define _TC_TYPE TRANSCEIVER_XBEE
+
 #elif defined( MODULE_MC1322X )
 #include "mc1322x.h"
 #include "maca.h"

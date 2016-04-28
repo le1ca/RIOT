@@ -32,7 +32,7 @@
 
 /* supported transceivers */
 #ifdef MODULE_TI_XBEE
-#include "ti_xbee.h"
+#include "xbee.h"
 #endif
 
 #ifdef MODULE_TI_EMAC
@@ -839,8 +839,6 @@ static int8_t send_packet(transceiver_type_t t, void *pkt)
 #endif
 #elif MODULE_TI_EMAC
 	ethernet_frame *p = (ethernet_frame *) pkt;
-#elif MODULE_XBEE
-    xbee_incoming_packet_t *p = (xbee_incoming_packet_t *) pkt;
 #else
     radio_packet_t *p = (radio_packet_t *)pkt;
     DEBUG("transceiver: Send packet to %" PRIu16 "\n", p->dst);
@@ -915,7 +913,7 @@ static int8_t send_packet(transceiver_type_t t, void *pkt)
 #endif
 #ifdef MODULE_XBEE
         case TRANSCEIVER_XBEE:
-            res = xbee_send(p);  // TODO: figure out where to implement / include xbee_send()
+            res = xbee_send(p);
             break;
 #endif
 #ifdef MODULE_AT86RF231
@@ -1089,7 +1087,7 @@ static int32_t set_pan(transceiver_type_t t, void *pan)
 		case TRANSCEIVER_XBEE:
             // int32_t can fit into uint16_t, right? Let's hope the extra
             // precision is unnecessary
-			return xbee_set_pan((uint16_t) c);
+			return xbee_set_pan_id((uint16_t) c);
 #endif
 
         default:
@@ -1131,7 +1129,7 @@ static int32_t get_pan(transceiver_type_t t)
 #endif
 #ifdef MODULE_XBEE
 		case TRANSCEIVER_XBEE:
-			return (int32_t) xbee_get_pan();
+			return (int32_t) xbee_get_pan_id();
 #endif
 
         default:
@@ -1308,11 +1306,12 @@ static transceiver_eui64_t set_long_addr(transceiver_type_t t, void *address)
         case TRANSCEIVER_AT86RF231:
             return at86rf231_set_address_long(addr);
 #endif
-#ifdef MODULE_XBEE:
+#ifdef MODULE_XBEE
 
         case TRANSCEIVER_XBEE:
             // Calling this sets a core panic. Maybe we shouldn't implement this?
             return xbee_set_long_address(addr);
+#endif
 
         default:
             (void) addr;

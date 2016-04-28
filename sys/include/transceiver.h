@@ -87,6 +87,13 @@
 #endif
 #endif
 
+#ifdef MODULE_XBEE
+#include "xbee.h"
+#ifndef TRANSCEIVER_DEFAULT
+#define TRANSCEIVER_DEFAULT TRANSCEIVER_XBEE
+#endif
+#endif
+
 #ifdef MODULE_AT86RF231
 #include "at86rf231.h"
 #ifndef TRANSCEIVER_DEFAULT
@@ -152,6 +159,12 @@ extern "C" {
 #if (TI_EMAC_MAX_DATA_LENGTH > PAYLOAD_SIZE)
 #undef PAYLOAD_SIZE
 #define PAYLOAD_SIZE (TI_EMAC_MAX_DATA_LENGTH)
+#endif
+#endif
+#ifdef MODULE_XBEE
+#if (XBEE_MAX_PKT_DATA_LENGTH > PAYLOAD_SIZE)
+#undef PAYLOAD_SIZE
+#define PAYLOAD_SIZE (XBEE_MAX_PKT_DATA_LENGTH)
 #endif
 #endif
 /**

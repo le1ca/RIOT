@@ -24,6 +24,7 @@
 #include "crash.h"
 #include "mutex.h"
 #include "transceiver.h"
+#include "ieee802154_frame.h"
 
 /* lower-level drivers needed to control the XBee module */
 #include "periph/uart.h"
@@ -36,7 +37,6 @@
 #define ENABLE_DEBUG    (0)
 #include "debug.h"
 
-#define XBEE_RECV_BUF_SIZE    128
 #define XBEE_PACKET_BUF_COUNT 8
 #define XBEE_PACKET_BUF_SIZE  (XBEE_PACKET_BUF_COUNT * sizeof(xbee_incoming_packet_t))
 #define XBEE_STACKSIZE        1024
@@ -80,15 +80,6 @@ typedef struct xbee_tx_status_report {
     uint8_t frame_num;
 } xbee_tx_status_report_t;
 
-/* data for an incoming packet */
-typedef struct xbee_incoming_packet {
-	char buf[XBEE_RECV_BUF_SIZE];
-	unsigned int len;
-	int8_t rssi; 
-	uint8_t lqi;
-	bool crc_ok;
-} xbee_incoming_packet_t; 
-
 
 /*****************************************************************************/
 /*                    Driver's internal utility functions                    */
@@ -109,9 +100,6 @@ static xbee_at_cmd_response_t latest_at_response;
 /* TX status response management data */
 static struct mutex_t mutex_wait_tx_status;
 static xbee_tx_status_report_t latest_tx_report;
-
-/* pid (process ID I think?) assigned to the transceiver */
-static kernel_pid_t transceiver_pid;
 
 #ifndef core_panic
 #define core_panic(code, string) {\
@@ -153,12 +141,14 @@ static void xbee_process_rx_packet(ieee802154_node_addr_t src_addr,
     }
 
     
-    xbee_incoming_packet_t p;  // @@@@@ MAKE THIS THE GLOBAL BUFFER THING
-    memcpy(xbee_global_incoming_packet.buf, buf, len);
+    xbee_incoming_packet_t p; 
+    memcpy(p.buf, buf, len);
     p.len = len;
     p.rssi = rssi;
     p.lqi = 0;
     p.crc_ok = true;
+    // We can pass a stack variable to xbee_pkt_handle_incoming() because that
+    // function is just going to copy it to a ringbuffer anyway.
     xbee_pkt_handle_incoming(&p);
     
 }
@@ -336,11 +326,13 @@ void xbee_pkt_thread_init(void){
 
 // I don't think this actually gets called ever?
 void xbee_pkt_handle_incoming(xbee_incoming_packet_t *p){
+    // xbee.c does the gruntwork of receiving things, then it sends received
+    // packets up to the transceiver layer.
     msg_t m;
     m.type = (uint16_t)RCV_PKT_XBEE;
     m.content.value = 0;  // It's a ringbuffer, so the head of the buffer is handled for us
     ringbuffer_add(&xbee_pkt_ringbuffer, (const char *) p, sizeof(xbee_incoming_packet_t));
-    msg_send_int(&m, transceiver_pid);  // interrupt
+    msg_send_int(&m, transceiver_pid);
 }
 
 /*****************************************************************************/
@@ -581,12 +573,23 @@ void xbee_incoming_char(char c)
 /*                        Driver's "public" functions                        */
 /*****************************************************************************/
 
+// prototype
+radio_tx_status_t xbee_do_send(ieee802154_packet_kind_t kind,
+                               ieee802154_node_addr_t dest,
+                               bool use_long_addr,
+                               bool wants_ack,
+                               void *buf,
+                               unsigned int len);
+
 int xbee_tx_callback(void* arg){
  return 0;
 }
 
 /* Primary entry point, mostly a wrapper around xbee_initialize() */
 void xbee_init(kernel_pid_t tpid){
+    // transceiver_pid is an extern variable in transceiver.h. 
+    // Not sure why we are passed it from transceiver if we just set a 
+    // transceiver variable, but I guess that's just how it goes in 
     transceiver_pid = tpid;
     printf("Transceiver PID: %d\n", transceiver_pid);
     xbee_initialize();
@@ -728,30 +731,30 @@ radio_tx_status_t xbee_transmit_tx_buf(void)
     return 0;
 }
 
-void xbee_send(ieee802154_packet_t pkt)
+int8_t xbee_send(ieee802154_packet_t *pkt)
 {
     // PAY ATTENTION! This function is where the magic happens. And it will also be a source
     // of gnarly bugs, I'm sure. 
 
-    uint8_t *payload = pkt.frame.payload;
+    uint8_t *payload = pkt->frame.payload;
 
     // Oh lordy I hope the frame types correspond to packet kinds
     ieee802154_packet_kind_t kind;
-    switch (pkt.frame.fcf.frame_type) {
-        case ieee802154_frame_type_t.IEEE_802154_BEACON_FRAME:
-            kind = ieee802154_packet_kind_t.PACKET_KIND_BEACON;
+    switch (pkt->frame.fcf.frame_type) {
+        case IEEE_802154_BEACON_FRAME:
+            kind = PACKET_KIND_BEACON;
             break;
-        case ieee802154_frame_type_t.IEEE_802154_DATA_FRAME:
-            kind = ieee802154_packet_kind_t.PACKET_KIND_DATA;
+        case IEEE_802154_DATA_FRAME:
+            kind = PACKET_KIND_DATA;
             break;
-        case ieee802154_frame_type_t.IEEE_802154_ACK_FRAME:
-            kind = ieee802154_packet_kind_t.PACKET_KIND_ACK;
+        case IEEE_802154_ACK_FRAME:
+            kind = PACKET_KIND_ACK;
             break;
-        case ieee802154_frame_type_t.IEEE_802154_MAC_CMD_FRAME:
-            kind = ieee802154_packet_kind_t.PACKET_KIND_MAC_CMD;
+        case IEEE_802154_MAC_CMD_FRAME:
+            kind = PACKET_KIND_MAC_CMD;
             break;
         default:
-            kind = ieee802154_packet_kind_t.PACKET_KIND_INVALID;
+            kind = PACKET_KIND_INVALID;
             break;
     }
 
@@ -759,14 +762,14 @@ void xbee_send(ieee802154_packet_t pkt)
     // Well we have a frame property of uint8_t dest_addr[8], so I think it's safe to say it's 64 bytes
     // WARNING: come back and check to make sure the endian-ness is correct. I will assume little endian just because.
     uint64_t long_addr = 0;
-    long_addr += pkt.frame.dest_addr[0];
-    long_addr += ((uint64_t) pkt.frame.dest_addr[1]) << 8;
-    long_addr += ((uint64_t) pkt.frame.dest_addr[2]) << 16;
-    long_addr += ((uint64_t) pkt.frame.dest_addr[3]) << 24;
-    long_addr += ((uint64_t) pkt.frame.dest_addr[4]) << 32;
-    long_addr += ((uint64_t) pkt.frame.dest_addr[5]) << 40;
-    long_addr += ((uint64_t) pkt.frame.dest_addr[6]) << 48;
-    long_addr += ((uint64_t) pkt.frame.dest_addr[7]) << 56;
+    long_addr += pkt->frame.dest_addr[0];
+    long_addr += ((uint64_t) pkt->frame.dest_addr[1]) << 8;
+    long_addr += ((uint64_t) pkt->frame.dest_addr[2]) << 16;
+    long_addr += ((uint64_t) pkt->frame.dest_addr[3]) << 24;
+    long_addr += ((uint64_t) pkt->frame.dest_addr[4]) << 32;
+    long_addr += ((uint64_t) pkt->frame.dest_addr[5]) << 40;
+    long_addr += ((uint64_t) pkt->frame.dest_addr[6]) << 48;
+    long_addr += ((uint64_t) pkt->frame.dest_addr[7]) << 56;
     ieee802154_node_addr_t dest;
     dest.long_addr = long_addr;
 
@@ -779,13 +782,13 @@ void xbee_send(ieee802154_packet_t pkt)
     // Should we choose pkt.length, which includes the fcs (frame checking sequence), or 
     // should we choose pkt.frame.payload_len, which doesn't?
     // Picking the one without fcs for now. God forgive me.
-    unsigned int len = pkt.frame.payload_len;
+    unsigned int len = pkt->frame.payload_len;
 
-    radio_tx_status_t send_status = xbee_do_send(kind, dest, use_long_addr, payload, len);
+    radio_tx_status_t send_status = xbee_do_send(kind, dest, use_long_addr, wants_ack, payload, len);
     
     // Optional: make this return the number of bytes sent, instead; 0 simply means "no error".
     // But it's this big headerized packetized bullshit thing, so what is the number of bytes that I report?
-    if (send_status == radio_tx_status_t.RADIO_TX_OK) {
+    if (send_status == RADIO_TX_OK) {
         return 0;
     } else {
         return -1;
@@ -919,7 +922,7 @@ int32_t xbee_set_channel(unsigned int chan)
         core_panic(0x0bee,
                    "failed to set RF channel on XBee modem");
     }
-    return 0;
+    return (int32_t) chan;
 }
 
 unsigned int xbee_get_channel(void)
@@ -935,7 +938,7 @@ unsigned int xbee_get_channel(void)
     return (unsigned int) res.parameter;
 }
 
-void xbee_set_address(uint16_t addr)
+uint16_t xbee_set_address(uint16_t addr)
 {
     uint8_t buf[4];
     buf[0] = 'M';
@@ -947,6 +950,7 @@ void xbee_set_address(uint16_t addr)
         core_panic(0x0bee,
                    "failed to set 16-bit address on XBee modem");
     }
+    return addr;
 }
 
 uint16_t xbee_get_address(void)
@@ -962,11 +966,12 @@ uint16_t xbee_get_address(void)
     return (uint16_t) res.parameter;
 }
 
-void xbee_set_long_address(uint64_t addr)
+uint64_t xbee_set_long_address(uint64_t addr)
 {
     /* 64-bit long address is strictly read-only on XBee modems */
     core_panic(0x0bee,
                "cannot change long (64-bit) address on XBee modems");
+    return addr;
 }
 
 uint64_t xbee_get_long_address(void)
@@ -996,7 +1001,7 @@ uint64_t xbee_get_long_address(void)
     return addr;
 }
 
-void xbee_set_pan_id(uint16_t pan)
+uint16_t xbee_set_pan_id(uint16_t pan)
 {
     uint8_t buf[4];
     buf[0] = 'I';
@@ -1008,6 +1013,8 @@ void xbee_set_pan_id(uint16_t pan)
         core_panic(0x0bee,
                    "failed to set PAN ID on XBee modem");
     }
+    
+    return pan;
 }
 
 uint16_t xbee_get_pan_id(void)
@@ -1023,7 +1030,7 @@ uint16_t xbee_get_pan_id(void)
     return (uint16_t) res.parameter;
 }
 
-void xbee_set_tx_power(int pow)
+int xbee_set_tx_power(int pow)
 {
     uint8_t pl = 0;
     if ((pow > -10) && (pow < -4)) {
@@ -1045,6 +1052,8 @@ void xbee_set_tx_power(int pow)
         core_panic(0x0bee,
                    "failed to set TX power level on XBee modem");
     }
+
+    return pow;
 }
 
 int xbee_get_tx_power(void)
@@ -1098,7 +1107,7 @@ bool xbee_get_monitor(void)
 {
     /* XBee modems don't offer a monitor/promiscuous mode */
     return false;
-
+}
 
 
 
