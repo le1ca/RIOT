@@ -46,6 +46,7 @@ typedef struct xbee_incoming_packet {
 	uint8_t lqi;
 	bool crc_ok;
     uint8_t processing;
+    ieee802154_node_addr_t src;
 } xbee_incoming_packet_t; 
 
 // All the public functions

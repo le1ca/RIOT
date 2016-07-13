@@ -315,13 +315,15 @@ int ccnl_io_loop(struct ccnl_relay_s *ccnl)
     msg_t in;
 #if MODULE_AT86RF231 || MODULE_CC2420 || MODULE_MC1322X
     ieee802154_packet_t *p;
+#elif MODULE_XBEE
+    xbee_incoming_packet_t *p;
 #else
     radio_packet_t *p;
 #endif
     riot_ccnl_msg_t *m;
 
     while (!ccnl->halt_flag) {
-
+        // WARNING: This will block until the interest is received somehow.
         msg_receive(&in);
 
         mutex_lock(&ccnl->global_lock);
@@ -335,6 +337,8 @@ int ccnl_io_loop(struct ccnl_relay_s *ccnl)
                          (p->frame.src_addr[0]) | (p->frame.src_addr[1] << 8));
                 DEBUGMSG(1, "\tDst:\t%u\n",
                          (p->frame.dest_addr[0]) | (p->frame.dest_addr[1] << 8));
+#elif MODULE_XBEE
+                p = (xbee_incoming_packet_t *) in.content.ptr;
 #else
                 p = (radio_packet_t *) in.content.ptr;
                 DEBUGMSG(1, "\tLength:\t%u\n", p->length);
@@ -348,6 +352,10 @@ int ccnl_io_loop(struct ccnl_relay_s *ccnl)
                     p->frame.src_addr[0] = RIOT_BROADCAST >> 8;
                     p->frame.src_addr[1] = RIOT_BROADCAST && 0xFF;
                 }
+#elif MODULE_XBEE
+                if (!p->src.pan.addr) {
+                    p->src.pan.addr = RIOT_BROADCAST;
+                }
 #else
                 if (!p->src) {
                     p->src = RIOT_BROADCAST;
@@ -359,10 +367,18 @@ int ccnl_io_loop(struct ccnl_relay_s *ccnl)
                              (unsigned char *) p->frame.payload,
                              (int) p->frame.payload_len,
                              *((uint16_t*) p->frame.src_addr));
+#elif MODULE_XBEE
+                // I don't think xbee knows by default who sent the message,
+                // at least not according to the structure of xbee_incoming__packet_t,
+                // so we stick in "broadcast" for now.
+                ccnl_core_RX(ccnl, RIOT_TRANS_IDX,
+                            (unsigned char *) p->buf,
+                            (int) p->len,
+                            p->src.pan.addr);
 #else
                 ccnl_core_RX(ccnl, RIOT_TRANS_IDX,
                              (unsigned char *) p->data,
-                             (int) p->length, p->src);
+                             (int) p->length, p->src.addr);
 #endif
                 p->processing--;
                 break;

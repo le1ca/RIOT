@@ -112,6 +112,7 @@ static xbee_tx_status_report_t latest_tx_report;
 /* send a character, via UART, to the XBee module */
 static void send_xbee(const uint8_t c)
 {
+    printf("$ Xbee sent char: %c (%i) (0x%2X)\n", c, c, c);
     int res = uart_write_blocking(XBEE_UART_LINK, c);
     if (res < 0) {
         core_panic(0x0bee,
@@ -147,6 +148,7 @@ static void xbee_process_rx_packet(ieee802154_node_addr_t src_addr,
     p.rssi = rssi;
     p.lqi = 0;
     p.crc_ok = true;
+    p.src = src_addr;
     // We can pass a stack variable to xbee_pkt_handle_incoming() because that
     // function is just going to copy it to a ringbuffer anyway.
     xbee_pkt_handle_incoming(&p);
@@ -177,6 +179,7 @@ static void xbee_process_AT_command_response(uint8_t st,
                                              uint16_t cmd,
                                              uint32_t param)
 {
+    char error_msg[1000];
     switch (st) {
     case XBEE_AT_CMD_OK:
     case XBEE_AT_CMD_INVALID:
@@ -191,8 +194,10 @@ static void xbee_process_AT_command_response(uint8_t st,
         break;
     default:
         /* other/unknown error */
+        sprintf(error_msg, "Unexpected error during AT command on XBee with "
+            "st = %i, fnum = %i, cmd = %i, param = %i", st, fnum, cmd, param);
         core_panic(0x0bee,
-                   "Unexpected error during AT command on XBee");
+                   error_msg);
     }
 }
 
@@ -252,6 +257,9 @@ static void xbee_send_API_command(uint8_t cmd_id,
 
 /* send an "AT" (i.e. high-level) command to the XBee modem,
     and wait for its response */
+
+
+
 static xbee_at_cmd_response_t xbee_send_AT_command(unsigned int len,
                                                    const uint8_t *str)
 {
@@ -449,6 +457,7 @@ static void xbee_read_til_cr(void){
  */
 void xbee_incoming_char(char c)
 {
+    printf("$ Xbee received char: %c (%i) (%2X)\n", c, c, c);
     uint8_t in = (uint8_t) c;
     uint16_t cmd;
     uint32_t param;
@@ -912,12 +921,20 @@ void xbee_switch_to_rx(void)
 
 int32_t xbee_set_channel(unsigned int chan)
 {
+    // XBee does not allow you to set channel. Former code is below if you want
+    // to find a way.
+    return chan;
+
     uint8_t buf[4];
     buf[0] = 'C';
-    buf[1] = 'H';
-    buf[2] = (chan & 0xff);
+    buf[1] = 'N';
+    // NOTE: we need to send the ascii value for the channel number.
+    // The following code will work for channels 0-9, but above that write a more
+    // sophisticated function (using sprintf, probably).
+    buf[2] = ((11 + 48) & 0xff);
+    //buf[2] = ((chan + 48) & 0xff); 
     buf[3] = 0;
-    xbee_at_cmd_response_t res = xbee_send_AT_command(3, buf);
+    xbee_at_cmd_response_t res = xbee_send_AT_command(3, buf);    
     if (res.status != XBEE_AT_CMD_OK) {
         core_panic(0x0bee,
                    "failed to set RF channel on XBee modem");

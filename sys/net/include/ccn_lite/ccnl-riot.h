@@ -45,7 +45,7 @@ extern "C" {
 #define TRANSCEIVER TRANSCEIVER_DEFAULT
 
 #define CCNL_DEFAULT_CHANNEL 6
-#define CCNL_DEFAULT_MAX_CACHE_ENTRIES  0   /* 0: no content caching, cache is disabled */
+#define CCNL_DEFAULT_MAX_CACHE_ENTRIES  100   /* 0: no content caching, cache is disabled */
 #define CCNL_DEFAULT_THRESHOLD_PREFIX   1
 #define CCNL_DEFAULT_THRESHOLD_AGGREGATE 2
 
